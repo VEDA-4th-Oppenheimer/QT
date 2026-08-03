@@ -1,5 +1,6 @@
 #include "RtspSource.h"
 #include "RtspDecoder.h"
+#include "ConfigPath.h"
 
 extern "C" {
 #include <libavutil/log.h>
@@ -20,7 +21,7 @@ RtspSource::~RtspSource() {
 }
 
 void RtspSource::loadConfigAndStart(const QString &path) {
-    QFile f(path);
+    QFile f(resolveConfigPath(path));
     if (!f.open(QIODevice::ReadOnly)) {
         emit logLine("RTSP", QString("%1 없음 — RTSP 비활성화 (기존 데모/라이브 채널 상태 유지)").arg(path));
         return;

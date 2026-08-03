@@ -65,8 +65,11 @@ rtsp://USER:PASSWORD@CAMERA_IP:554/<0~3>/profile2/media.smp
 `cert_dir` 아래 두면 자동으로 `ssl://`(mTLS)를 쓰고, 없으면 `tcp://` 평문으로
 degraded 접속한다. 개인키(`.key`)는 어떤 경우에도 저장소에 커밋하지 않는다.
 
-CLion에서 실행할 경우 Run/Debug configuration의 working directory를 프로젝트
-루트로 맞춰야 `config/` 파일들을 찾는다.
+`config/` 경로는 `src/ConfigPath.h`의 `resolveConfigPath()`가 해석한다: 먼저 현재
+작업 디렉터리 기준 상대경로를 찾고, 없으면 실행파일 위치(macOS `.app` 번들이면
+`Contents/MacOS/`, Windows면 `.exe` 폴더)에서 위로 최대 6단계까지 올라가며
+`config/`를 찾는다. 그래서 CLion에서 바로 실행하든, 배포된 `.app`/`.exe`를
+더블클릭하든 프로젝트 루트에 있는 `config/` 파일을 그대로 찾는다.
 
 ## 빌드
 
@@ -75,6 +78,64 @@ cmake -S . -B build
 cmake --build build
 ./build/spatial_vms
 ```
+
+## 배포용 패키징 (Qt/FFmpeg/Paho 미설치 고객 PC용)
+
+`qt_add_executable`은 macOS에서 `.app` 번들을(APPLE), Windows에서는 콘솔창 없는
+GUI `.exe`를(WIN32) 만든다 (`CMakeLists.txt` 참고). 다만 기본 빌드 결과물은 여전히
+빌드 머신의 Homebrew 라이브러리를 동적으로 링크하고 있어 그 자체로는 배포할 수
+없다 — 아래 절차로 의존성을 번들링해야 한다.
+
+### macOS (검증 완료)
+
+```bash
+cmake -S . -B build && cmake --build build
+./scripts/package_macos.sh
+```
+
+`scripts/package_macos.sh`가 하는 일:
+1. `macdeployqt`로 Qt 프레임워크 + 링크된 Homebrew dylib(FFmpeg/Paho/OpenSSL 등)을
+   `spatial_vms.app/Contents/Frameworks`로 복사하고 install name을
+   `@executable_path/../Frameworks/...`로 재기록.
+2. 이 앱이 실제로 쓰지 않는 플러그인(`libqpdf`/`libqsvgicon`/
+   `libqtvirtualkeyboardplugin` — QtPdf/QtSvg/QtVirtualKeyboard 프레임워크를
+   요구하지만 이 앱은 해당 프레임워크를 링크하지 않음) 제거.
+3. 번들 전체를 스캔해 남은 Homebrew(`/opt/homebrew`)/`/usr/local` 절대경로 참조가
+   있으면 `install_name_tool`로 재기록.
+4. `codesign --deep --sign -`로 ad-hoc 재서명 (배포 시 실제 서명이 필요하면
+   `-s '<Developer ID>'`로 교체).
+5. `hdiutil`로 `build/SPATIAL-VMS.dmg` 생성.
+
+검증 방법(실제로 확인함): `env -i build/spatial_vms.app/Contents/MacOS/spatial_vms`
+— `PATH`/`HOME` 등 환경변수를 전부 지운 상태로, `/tmp`(프로젝트와 무관한 작업
+디렉터리)에서 실행해도 정상 기동하고 `config/cameras.json`을 찾는 것까지 확인.
+Homebrew가 전혀 없는 macOS에서 도 이 `.dmg`를 열어 `.app`을 `Applications`로
+드래그하면 바로 쓸 수 있다.
+
+### Windows (미검증 — 팀원 테스트 필요)
+
+이 개발 환경은 macOS라 아래 절차를 실제로 빌드/실행해보지 못했다. Qt 공식
+문서 기준 표준 절차이며, 팀원이 Windows 머신에서 검증해야 한다.
+
+```powershell
+# vcpkg로 의존성 설치 (1회)
+vcpkg install qtbase[widgets] ffmpeg[avcodec,avformat,swscale] openssl --triplet x64-windows
+# paho-mqtt-cpp는 vcpkg에 없을 수 있어 소스 빌드 필요 (paho.mqtt.c 먼저, paho.mqtt.cpp 그 다음)
+
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+
+# Qt DLL 번들링
+windeployqt build\Release\spatial_vms.exe
+
+# FFmpeg/Paho/OpenSSL DLL은 windeployqt가 모르므로 build\Release\ 옆에 수동 복사
+# (vcpkg installed\x64-windows\bin\*.dll) 하거나 정적 링크(triplet x64-windows-static)로 전환
+```
+
+macOS의 `resolveConfigPath()`/rpath 상당 개념은 Windows에선 "실행파일과 같은
+폴더에 필요한 DLL이 다 있어야 한다"로 단순화된다 — `config/` 폴더도 `.exe` 옆에
+두면 `resolveConfigPath()`가 그대로 찾는다. `windeployqt --dir` 결과 폴더를 그대로
+zip으로 배포하거나 Inno Setup 등으로 설치 프로그램을 만들면 된다(미검증).
 
 ## 화면 구성
 

@@ -12,6 +12,7 @@
 #include "DemoBridge.h"
 #include "RtspSource.h"
 #include "Theme.h"
+#include "ConfigPath.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -208,7 +209,7 @@ void MainWindow::setDemoMode(bool demo) {
     QString host = "localhost";
     quint16 port = 1883;
     QString certDir;
-    QFile f("config/mqtt.json");
+    QFile f(resolveConfigPath("config/mqtt.json"));
     if (f.open(QIODevice::ReadOnly)) {
         const auto o = QJsonDocument::fromJson(f.readAll()).object();
         host    = o.value("host").toString(host);

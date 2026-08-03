@@ -53,7 +53,22 @@ set(HEADERS
     src/RtspSource.h
 )
 
-qt_add_executable(spatial_vms ${SOURCES} ${HEADERS})
+if(APPLE)
+    set(MACOSX_BUNDLE_FLAG MACOSX_BUNDLE)
+elseif(WIN32)
+    set(MACOSX_BUNDLE_FLAG WIN32)   # 콘솔 창 없이 뜨는 일반 GUI exe
+else()
+    set(MACOSX_BUNDLE_FLAG)
+endif()
+
+qt_add_executable(spatial_vms ${MACOSX_BUNDLE_FLAG} ${SOURCES} ${HEADERS})
+
+set_target_properties(spatial_vms PROPERTIES
+    MACOSX_BUNDLE_BUNDLE_NAME "SPATIAL-VMS"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.veda4th.spatialvms"
+    MACOSX_BUNDLE_BUNDLE_VERSION "1.0"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+)
 
 target_include_directories(spatial_vms PRIVATE src)
 
