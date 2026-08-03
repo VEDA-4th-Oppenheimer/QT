@@ -55,19 +55,25 @@ set(HEADERS
 
 if(APPLE)
     set(MACOSX_BUNDLE_FLAG MACOSX_BUNDLE)
+    set(APP_ICON_SOURCES resources/AppIcon.icns)
+    set_source_files_properties(resources/AppIcon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
 elseif(WIN32)
     set(MACOSX_BUNDLE_FLAG WIN32)   # 콘솔 창 없이 뜨는 일반 GUI exe
+    set(APP_ICON_SOURCES resources/app.rc)
 else()
     set(MACOSX_BUNDLE_FLAG)
+    set(APP_ICON_SOURCES)
 endif()
 
-qt_add_executable(spatial_vms ${MACOSX_BUNDLE_FLAG} ${SOURCES} ${HEADERS})
+qt_add_executable(spatial_vms ${MACOSX_BUNDLE_FLAG} ${SOURCES} ${HEADERS} ${APP_ICON_SOURCES})
 
 set_target_properties(spatial_vms PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "SPATIAL-VMS"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.veda4th.spatialvms"
     MACOSX_BUNDLE_BUNDLE_VERSION "1.0"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+    MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
 )
 
 target_include_directories(spatial_vms PRIVATE src)

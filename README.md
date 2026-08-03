@@ -86,6 +86,15 @@ GUI `.exe`를(WIN32) 만든다 (`CMakeLists.txt` 참고). 다만 기본 빌드 �
 빌드 머신의 Homebrew 라이브러리를 동적으로 링크하고 있어 그 자체로는 배포할 수
 없다 — 아래 절차로 의존성을 번들링해야 한다.
 
+### 앱 아이콘
+
+`resources/AppIcon.icns`(macOS)/`resources/AppIcon.ico`(Windows) — CCTV 불릿
+카메라 실루엣 + REC 표시등, 관제실 다크 테마(`Theme.h`) 색상과 맞춰 그렸다.
+`CMakeLists.txt`가 플랫폼별로 자동으로 번들에 넣는다(macOS는
+`MACOSX_BUNDLE_ICON_FILE`+리소스 복사, Windows는 `resources/app.rc` 통해 `.exe`에
+아이콘 리소스로 컴파일). 디자인을 바꾸려면 `scripts/gen_app_icon.cpp` 참고
+(사용법은 파일 상단 주석).
+
 ### macOS (검증 완료)
 
 ```bash
