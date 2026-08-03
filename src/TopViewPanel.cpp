@@ -95,12 +95,12 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     sv->setSpacing(8);
 
     auto *summary = new QHBoxLayout;
-    auto *sTitle = new QLabel("CALIBRATION", stats);
+    auto *sTitle = new QLabel("SCAN", stats);
     sTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
-    m_calibSummary = new QLabel(stats);
-    m_calibSummary->setStyleSheet(Theme::mono(11) + "color:#9aa6b1;");
+    m_scanSummary = new QLabel(stats);
+    m_scanSummary->setStyleSheet(Theme::mono(11) + "color:#9aa6b1;");
     summary->addWidget(sTitle);
-    summary->addWidget(m_calibSummary, 1);
+    summary->addWidget(m_scanSummary, 1);
     sv->addLayout(summary);
 
     auto *row = new QHBoxLayout;
@@ -111,7 +111,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     row->addWidget(vDivider(stats));
     row->addLayout(statCell(stats, "SCAN PTS", &m_scanPts));
     row->addWidget(vDivider(stats));
-    row->addLayout(statCell(stats, "RETRY", &m_retry));
+    row->addLayout(statCell(stats, "EXPECTED", &m_expected));
     sv->addLayout(row);
 
     root->addWidget(head);
@@ -120,7 +120,8 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     root->addWidget(stats);
 
     setImu({});
-    setCalib({});
+    setDaemonState({});
+    setScanProgress({});
 }
 
 void TopViewPanel::setRoomSize(double w, double d) { m_map->setRoomSize(w, d); }
@@ -128,6 +129,13 @@ void TopViewPanel::setEdges(const QVector<MapEdge> &e) { m_map->setEdges(e); }
 void TopViewPanel::setObjects(const QVector<SpatialObject> &o) { m_map->setObjects(o); }
 
 void TopViewPanel::setImu(const ImuState &imu) {
+    if (!imu.valid) {
+        m_roll->setText("N/A");
+        m_pitch->setText("N/A");
+        m_roll->setStyleSheet(Theme::mono(19, 700) + QString("color:%1;").arg(Theme::TextFaint.name()));
+        m_pitch->setStyleSheet(Theme::mono(19, 700) + QString("color:%1;").arg(Theme::TextFaint.name()));
+        return;
+    }
     const QString rollColor  = imu.level() ? Theme::Ok.name() : Theme::DangerText.name();
     const QString pitchColor = imu.level() ? Theme::Ok.name() : Theme::DangerText.name();
     m_roll->setText(QString("%1°").arg(imu.roll, 0, 'f', 1));
@@ -136,18 +144,27 @@ void TopViewPanel::setImu(const ImuState &imu) {
     m_pitch->setStyleSheet(Theme::mono(19, 700) + QString("color:%1;").arg(pitchColor));
 }
 
-void TopViewPanel::setCalib(const CalibState &c) {
-    const int pct = (c.status == "PASS" || c.status == "EXPORT") ? 100 : c.progress;
-    m_coverage->setText(QString("SCAN PROGRESS %1%").arg(pct));
+void TopViewPanel::setDaemonState(const DaemonState &s) {
+    const QString color =
+        (s.state == "IDLE")     ? Theme::Ok.name() :
+        (s.state == "SCANNING") ? Theme::AccentBright.name() :
+        (s.state == "DISARM")   ? Theme::DangerText.name() : Theme::TextDim2.name();
+    m_scanSummary->setText(QString("%1  ·  link %2  ·  homed %3  ·  %4")
+                                .arg(s.state)
+                                .arg(s.linkAlive ? "OK" : "DOWN")
+                                .arg(s.homed ? "Y" : "N")
+                                .arg(s.ts.isValid() ? s.ts.toString("HH:mm:ss") : QString("--:--:--")));
+    m_scanSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(color));
+}
 
-    const bool ok = c.status == "PASS";
-    const QString statusColor = ok ? Theme::Ok.name() : (c.status == "FAIL" ? Theme::DangerText.name() : Theme::TextDim2.name());
-    m_calibSummary->setText(QString("%1  ·  edge_rmse %2 px  ·  inlier %3%  ·  %4")
-                                 .arg(c.status)
-                                 .arg(c.edgeRmsePx, 0, 'f', 2)
-                                 .arg(int(c.inlierRatio * 100))
-                                 .arg(c.stamp.isValid() ? c.stamp.toString("HH:mm:ss") : QString("--:--:--")));
-    m_calibSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(statusColor));
-    m_scanPts->setText(QLocale().toString(c.scanPoints));
-    m_retry->setText(QString("%1/%2").arg(c.retry).arg(c.maxRetry));
+void TopViewPanel::setScanProgress(const ScanProgress &p) {
+    m_coverage->setText(QString("SCAN PROGRESS %1%").arg(p.percent));
+    m_scanPts->setText(QLocale().toString(p.points));
+    m_expected->setText(QLocale().toString(p.expected));
+}
+
+void TopViewPanel::setScanResult(const ScanResult &r) {
+    m_coverage->setText(QStringLiteral("SCAN PROGRESS 100%"));
+    m_scanPts->setText(QLocale().toString(r.points));
+    m_expected->setText(QLocale().toString(r.expected));
 }

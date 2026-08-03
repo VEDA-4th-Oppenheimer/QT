@@ -1,22 +1,22 @@
 #pragma once
 #include <QByteArray>
 #include <QString>
+#include <QJsonObject>
 #include <memory>
 #include <mqtt/async_client.h>
 #include "DataBridge.h"
 
 // MQTT 브로커 <-> Qt UI 브리지 (Eclipse Paho MQTT C++).
-// 브로커는 RPi 에 상주(Mosquitto, MQTT-over-TLS 8883)하며 Qt·카메라 단·통합 데몬이 모두
-// 이 브로커의 클라이언트다 ("Device 파트 아키텍처 및 역할 분담 V2" 기준).
+// 계약: docs 없이도 여기 주석만으로 알 수 있게 — MQTT_INTERFACE_CONTRACT.md v1.0
+// (RPi 저장소 docs/, 데몬=이현우 / Qt=송영빈 / 브로커·인증서=이광진 서명)을 그대로 구현한다.
 //
-// 확정: scan/start·scan/stop (발행) — RPi 데몬 FSM 트리거 (protocol.h CMD_SCAN_START/STOP)
-//       scan/status·scan/done (구독) — 스캔 진행률 / 완료(포인트클라우드 파일 경로)
-// 미정(팀 협의 중, "MQTT 토픽 스키마 확정" 항목): 카메라 단(이영민) 캘리브 결과·실좌표
-//       발행 토픽명. 아래 calib/result, calib/objects, imu/level 은 확정 전까지의
-//       placeholder 이며, 실제 스키마가 정해지면 이 파일만 고치면 된다.
+//   토픽(전부 adts/kit1/... 접두): cmd/{scan,stop,home,disarm} 발행,
+//                                  state/{daemon,scan}, event/{progress,error} 구독.
+//   포트 8883 + mTLS(클라이언트 인증서). 인증서가 아직 없으면(§6, 발급 전) tcp:// 평문
+//   1883 으로 degraded 접속 — 로컬 개발/데모용. 실제 인증서가 배치되면 자동으로 ssl:// 를 쓴다.
+//   Client ID 는 계약서 §1 대로 고정 "qt-console" (중복 접속하면 서로 끊긴다).
 //
-// 영상은 이 브릿지가 아니라 RtspSource 가 카메라에서 RTSP 로 직접 받는다
-// (아키텍처 V2: PNM-C16083RVQ --RTSP/SUNAPI--> Pi/Qt, MQTT 경로 아님).
+// 영상은 이 브릿지가 아니라 RtspSource 가 카메라에서 RTSP 로 직접 받는다(MQTT 경로 아님).
 class MqttBridge : public DataBridge, public virtual mqtt::callback {
     Q_OBJECT
 public:
@@ -26,12 +26,19 @@ public:
     void start() override;   // no-op — connectToBroker() 로 명시적으로 연결
     void stop() override;
 
-    void connectToBroker(const QString &host, quint16 port);
+    // certDir 에 ca.crt/qt-console.crt/qt-console.key 가 모두 있으면 ssl://(mTLS)로,
+    // 없으면 tcp:// 평문으로 degraded 접속한다(로컬 개발용, 계약서 §6 인증서 배치 전).
+    void connectToBroker(const QString &host, quint16 port, const QString &certDir = QString());
     void disconnectFromBroker();
 
 public slots:
-    void setKitPower(bool on) override;   // 실제 프로토콜엔 "전원" 개념이 없음 — 로그만 남김(TODO)
-    void requestRescan() override;        // scan/start 발행 (CMD_SCAN_START)
+    void requestScan(int panStartDdeg, int panEndDdeg,
+                      int tiltStartDdeg, int tiltEndDdeg,
+                      int stepDdeg, int sensorHeightMm) override;
+    void requestStop() override;
+    void requestHome() override;
+    void requestDisarm() override;
+    void requestRearm() override;
 
 private:
     // mqtt::callback — Paho 내부 네트워크 스레드에서 호출됨
@@ -41,18 +48,19 @@ private:
     void delivery_complete(mqtt::delivery_token_ptr token) override;
 
     void subscribeAll();
-    void publish(const QString &topic, const QByteArray &payload);
+    void publishCommand(const QString &topic, const QJsonObject &fields);
+    QString newReqId();
 
     // GUI 스레드에서 안전하게 실행되는 실제 파싱 처리부
     void onRawMessage(const QString &topic, const QByteArray &payload);
-    void handleScanStatus(const QByteArray &payload);
-    void handleScanDone(const QByteArray &payload);
-    void handleCalibResult(const QByteArray &payload);   // placeholder 토픽 (TODO)
-    void handleImu(const QByteArray &payload);           // placeholder 토픽 (TODO)
-    void handleObjects(const QByteArray &payload);        // placeholder 토픽 (TODO)
+    void handleStateDaemon(const QByteArray &payload);
+    void handleStateScan(const QByteArray &payload);
+    void handleEventProgress(const QByteArray &payload);
+    void handleEventError(const QByteArray &payload);
+    bool acceptsReqId(const QString &incoming) const;   // 내가 보낸 req_id 아니면 무시(계약 §4)
 
     std::unique_ptr<mqtt::async_client> m_client;
     QString  m_host;
     quint16  m_port = 1883;
-    CalibState m_calib;   // scan/status, scan/done, calib/result 를 누적 반영
+    QString  m_lastReqId;   // 가장 최근에 Qt 가 발행한 req_id
 };

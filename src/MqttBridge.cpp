@@ -4,13 +4,31 @@
 #include <QJsonArray>
 #include <QDateTime>
 #include <QUuid>
+#include <QDir>
+#include <QFile>
 #include <QDebug>
 #include <QMetaObject>
 #include <cmath>
 
 namespace {
-constexpr int kQos = 1;
+constexpr int kQosCmd = 1;
+constexpr int kQosBestEffort = 0;
 constexpr int kKeepAliveSec = 30;
+
+constexpr char kTopicCmdScan[]       = "adts/kit1/cmd/scan";
+constexpr char kTopicCmdStop[]       = "adts/kit1/cmd/stop";
+constexpr char kTopicCmdHome[]       = "adts/kit1/cmd/home";
+constexpr char kTopicCmdDisarm[]     = "adts/kit1/cmd/disarm";
+constexpr char kTopicStateWildcard[] = "adts/kit1/state/#";
+constexpr char kTopicEventWildcard[] = "adts/kit1/event/#";
+constexpr char kTopicStateDaemon[]   = "adts/kit1/state/daemon";
+constexpr char kTopicStateScan[]     = "adts/kit1/state/scan";
+constexpr char kTopicEventProgress[] = "adts/kit1/event/progress";
+constexpr char kTopicEventError[]    = "adts/kit1/event/error";
+
+QDateTime tsFromUnixSeconds(qint64 secs) {
+    return secs > 0 ? QDateTime::fromSecsSinceEpoch(secs) : QDateTime::currentDateTime();
+}
 }
 
 MqttBridge::MqttBridge(QObject *parent) : DataBridge(parent) {}
@@ -21,20 +39,39 @@ void MqttBridge::start() { /* 라이브 브리지는 connectToBroker() 로 명�
 
 void MqttBridge::stop() { disconnectFromBroker(); }
 
-void MqttBridge::connectToBroker(const QString &host, quint16 port) {
+void MqttBridge::connectToBroker(const QString &host, quint16 port, const QString &certDir) {
     m_host = host;
     m_port = port;
-    const std::string uri = QStringLiteral("tcp://%1:%2").arg(host).arg(port).toStdString();
-    const std::string clientId = QStringLiteral("spatial-vms-%1")
-                                      .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8))
-                                      .toStdString();
-    m_client = std::make_unique<mqtt::async_client>(uri, clientId);
+
+    const QString caCert     = certDir.isEmpty() ? QString() : certDir + "/ca.crt";
+    const QString clientCert = certDir.isEmpty() ? QString() : certDir + "/qt-console.crt";
+    const QString clientKey  = certDir.isEmpty() ? QString() : certDir + "/qt-console.key";
+    const bool haveCerts = !certDir.isEmpty()
+        && QFile::exists(caCert) && QFile::exists(clientCert) && QFile::exists(clientKey);
+
+    const std::string scheme = haveCerts ? "ssl://" : "tcp://";
+    const std::string uri = scheme + QStringLiteral("%1:%2").arg(host).arg(port).toStdString();
+
+    // 계약 §1: Client ID 고정 "qt-console" — 중복 접속하면 서로 끊긴다.
+    m_client = std::make_unique<mqtt::async_client>(uri, "qt-console");
     m_client->set_callback(*this);
 
     mqtt::connect_options opts;
     opts.set_clean_session(true);
     opts.set_keep_alive_interval(kKeepAliveSec);
     opts.set_automatic_reconnect(true);
+
+    if (haveCerts) {
+        mqtt::ssl_options ssl;
+        ssl.set_trust_store(caCert.toStdString());
+        ssl.set_key_store(clientCert.toStdString());
+        ssl.set_private_key(clientKey.toStdString());
+        opts.set_ssl(ssl);
+        emit logLine("MQTT", QString("mTLS 인증서 로드됨 (%1) — ssl://%2:%3").arg(certDir, host).arg(port));
+    } else {
+        emit logLine("MQTT", QString("인증서 없음(%1) — 평문 tcp://%2:%3 로 degraded 접속 "
+                                      "(계약 §6 인증서 배치 전 로컬 개발용)").arg(certDir, host).arg(port));
+    }
 
     try {
         m_client->connect(opts);
@@ -54,41 +91,78 @@ void MqttBridge::disconnectFromBroker() {
     }
 }
 
-void MqttBridge::setKitPower(bool on) {
-    // 실제 STM32/RPi 프로토콜엔 "전원 ON/OFF" 커맨드가 없다(CMD_HOME/SCAN_*/DISARM 뿐).
-    // 확정되면 이 자리에서 실제 토픽으로 publish 한다 — 지금은 로그만 남긴다.
-    emit logLine("POWER", on ? QStringLiteral("전원 ON 요청 (실제 프로토콜 미정 — 로그만 기록)")
-                              : QStringLiteral("전원 OFF 요청 (실제 프로토콜 미정 — 로그만 기록)"));
+QString MqttBridge::newReqId() {
+    m_lastReqId = QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    return m_lastReqId;
 }
 
-void MqttBridge::requestRescan() {
-    // CMD_SCAN_START. Qt 에 아직 pan/tilt 범위 입력 UI가 없어 기본 풀스윕 파라미터로 발행한다.
-    const QByteArray payload = R"({"pan_start_ddeg":0,"pan_end_ddeg":1800,)"
-                                R"("tilt_start_ddeg":0,"tilt_end_ddeg":0,)"
-                                R"("step_ddeg":10,"z_offset_mm":0})";
-    publish("scan/start", payload);
-    emit logLine("SCAN", QStringLiteral("scan/start 발행 (pan 0..180°, step 1.0°)"));
+bool MqttBridge::acceptsReqId(const QString &incoming) const {
+    // 계약 §4: 내가 보낸 req_id 가 아닌 응답은 무시(다른 콘솔이 붙어 있을 수 있다).
+    // req_id 가 아예 없는 페이로드(state/daemon 등)는 항상 통과.
+    return incoming.isEmpty() || m_lastReqId.isEmpty() || incoming == m_lastReqId;
 }
 
-void MqttBridge::publish(const QString &topic, const QByteArray &payload) {
-    if (!m_client || !m_client->is_connected()) return;
+void MqttBridge::publishCommand(const QString &topic, const QJsonObject &fields) {
+    if (!m_client || !m_client->is_connected()) {
+        emit logLine("MQTT", QString("브로커 미연결 — %1 발행 실패").arg(topic));
+        return;
+    }
+    const QByteArray payload = QJsonDocument(fields).toJson(QJsonDocument::Compact);
     try {
-        m_client->publish(topic.toStdString(), payload.constData(), payload.size(), kQos, false);
+        // 계약 §2 ⚠️: cmd 토픽에 retain 을 걸면 안 된다(재접속마다 재실행되는 안전 사고).
+        m_client->publish(topic.toStdString(), payload.constData(), payload.size(),
+                           kQosCmd, /*retained=*/false);
     } catch (const mqtt::exception &exc) {
         qWarning() << "MQTT publish failed on" << topic << ":" << exc.what();
     }
 }
 
+void MqttBridge::requestScan(int panStartDdeg, int panEndDdeg,
+                              int tiltStartDdeg, int tiltEndDdeg,
+                              int stepDdeg, int sensorHeightMm) {
+    const QString reqId = newReqId();
+    QJsonObject o;
+    o["req_id"] = reqId;
+    o["pan_ddeg"] = QJsonArray{panStartDdeg, panEndDdeg};
+    o["tilt_ddeg"] = QJsonArray{tiltStartDdeg, tiltEndDdeg};
+    o["step_ddeg"] = stepDdeg;
+    o["sensor_height_mm"] = sensorHeightMm;
+    publishCommand(kTopicCmdScan, o);
+    emit logLine("SCAN", QString("cmd/scan 발행 (req_id=%1) pan[%2..%3] tilt[%4..%5] step=%6")
+                              .arg(reqId).arg(panStartDdeg).arg(panEndDdeg)
+                              .arg(tiltStartDdeg).arg(tiltEndDdeg).arg(stepDdeg));
+}
+
+void MqttBridge::requestStop() {
+    const QString reqId = newReqId();
+    publishCommand(kTopicCmdStop, {{"req_id", reqId}});
+    emit logLine("SCAN", QString("cmd/stop 발행 (req_id=%1)").arg(reqId));
+}
+
+void MqttBridge::requestHome() {
+    const QString reqId = newReqId();
+    publishCommand(kTopicCmdHome, {{"req_id", reqId}});
+    emit logLine("SCAN", QString("cmd/home 발행 (req_id=%1)").arg(reqId));
+}
+
+void MqttBridge::requestDisarm() {
+    const QString reqId = newReqId();
+    publishCommand(kTopicCmdDisarm, {{"req_id", reqId}});
+    emit logLine("POWER", QString("cmd/disarm 발행 (req_id=%1) — 비상정지").arg(reqId));
+}
+
+void MqttBridge::requestRearm() {
+    // 계약에 DISARM -> IDLE 복구 토픽이 없다(코어에 rearm 트리거 API 미구현, TODO).
+    // 실제 킷에서는 하드웨어를 물리적으로 재무장해야 할 수 있다 — 여기선 로그만 남긴다.
+    emit logLine("POWER", QStringLiteral("REARM 요청 — 계약에 해당 토픽 없음(TODO, 이현우 협의 필요)"));
+}
+
 void MqttBridge::subscribeAll() {
     if (!m_client) return;
-    static const char *topics[] = {
-        "scan/status", "scan/done",           // 확정 (daemon_module.h)
-        "calib/result", "calib/objects",      // TODO: 카메라 단 발행 토픽명 협의 중
-        "imu/level",                          // TODO: 실시간 IMU 브로드캐스트 여부 미정
-    };
-    for (auto *t : topics) {
+    // 계약 §2: Qt 가 구독할 것은 이 두 줄이면 끝.
+    for (const char *t : {kTopicStateWildcard, kTopicEventWildcard}) {
         try {
-            m_client->subscribe(t, kQos);
+            m_client->subscribe(t, kQosCmd);
         } catch (const mqtt::exception &exc) {
             qWarning() << "MQTT subscribe failed on" << t << ":" << exc.what();
         }
@@ -98,12 +172,18 @@ void MqttBridge::subscribeAll() {
 void MqttBridge::connected(const std::string & /*cause*/) {
     emit brokerStateChanged(true);
     subscribeAll();
-    emit logLine("MQTT", QString("broker connected (%1:%2), 5 topics subscribed").arg(m_host).arg(m_port));
+    emit logLine("MQTT", QString("broker connected (%1:%2), state/#·event/# 구독").arg(m_host).arg(m_port));
 }
 
 void MqttBridge::connection_lost(const std::string &cause) {
     emit brokerStateChanged(false);
     emit logLine("MQTT", QString("connection lost: %1").arg(QString::fromStdString(cause)));
+    // LWT 는 브로커가 대신 발행해 주지만(계약 §5.2), 로컬 UI 도 즉시 OFFLINE 으로
+    // 내려서 keepalive 대기 없이 반영한다.
+    DaemonState offline;
+    offline.state = "OFFLINE";
+    offline.online = false;
+    emit daemonStateUpdated(offline);
 }
 
 void MqttBridge::delivery_complete(mqtt::delivery_token_ptr /*token*/) {}
@@ -118,90 +198,79 @@ void MqttBridge::message_arrived(mqtt::const_message_ptr msg) {
 }
 
 void MqttBridge::onRawMessage(const QString &topic, const QByteArray &payload) {
-    if (topic == "scan/status")     { handleScanStatus(payload); return; }
-    if (topic == "scan/done")       { handleScanDone(payload);   return; }
-    if (topic == "calib/result")    { handleCalibResult(payload); return; }
-    if (topic == "calib/objects")   { handleObjects(payload);    return; }
-    if (topic == "imu/level")       { handleImu(payload);        return; }
+    if (topic == kTopicStateDaemon)   { handleStateDaemon(payload);   return; }
+    if (topic == kTopicStateScan)     { handleStateScan(payload);     return; }
+    if (topic == kTopicEventProgress) { handleEventProgress(payload); return; }
+    if (topic == kTopicEventError)    { handleEventError(payload);    return; }
 }
 
-// scan/status: RPi 데몬이 SCANNING 중 발행 (struct scan_progress 기반 JSON 가정)
-//   {"percent":42,"points":7823,"expected":18432,"state":"SCANNING"}
-// 수평 게이트 실패 시 (아키텍처 V2 시퀀스): {"state":"tilt_ng"}
-void MqttBridge::handleScanStatus(const QByteArray &payload) {
+void MqttBridge::handleStateDaemon(const QByteArray &payload) {
     const auto o = QJsonDocument::fromJson(payload).object();
-    const QString state = o.value("state").toString();
-    if (state == "tilt_ng") {
-        emit logLine("LEVEL", QStringLiteral("수평 게이트 실패 — 스캔 거부 (재설치 필요)"));
-        return;
-    }
-    m_calib.status         = "SCANNING";
-    m_calib.progress       = o.value("percent").toInt();
-    m_calib.scanPoints     = o.value("points").toInt();
-    m_calib.expectedPoints = o.value("expected").toInt();
-    m_calib.stamp          = QDateTime::currentDateTime();
-    emit calibUpdated(m_calib);
+    DaemonState s;
+    s.state      = o.value("state").toString("OFFLINE");
+    s.online     = o.value("online").toBool();
+    s.linkAlive  = o.value("link_alive").toBool();
+    s.homed      = o.value("homed").toBool();
+    s.scanning   = o.value("scanning").toBool();
+    s.curPanDdeg  = o.value("cur_pan_ddeg").toInt();
+    s.curTiltDdeg = o.value("cur_tilt_ddeg").toInt();
+    s.lastErr    = o.value("last_err").toInt();
+    const auto lvl = o.value("level").toObject();
+    s.level.valid = lvl.value("valid").toBool();
+    s.level.roll  = lvl.value("roll_deg").toDouble();
+    s.level.pitch = lvl.value("pitch_deg").toDouble();
+    s.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
+
+    emit daemonStateUpdated(s);
+    emit imuUpdated(s.level);   // state/daemon.level 이 계약상 유일한 IMU 출처 (별도 imu/level 토픽 없음)
 }
 
-// scan/done: {"path":"...","point_count":18432,"stm_reported":18432}
-// 포인트클라우드 파일이 준비됐다는 뜻이지, 캘리브 결과(PASS/FAIL)는 아직 아니다.
-void MqttBridge::handleScanDone(const QByteArray &payload) {
+void MqttBridge::handleStateScan(const QByteArray &payload) {
     const auto o = QJsonDocument::fromJson(payload).object();
-    m_calib.status     = "EXPORT";
-    m_calib.scanPoints = o.value("point_count").toInt();
-    m_calib.stamp      = QDateTime::currentDateTime();
-    emit calibUpdated(m_calib);
-    emit logLine("EXPORT", QString("포인트클라우드 완료: %1 (%2점) — 카메라 단 전달 대기")
-                                .arg(o.value("path").toString()).arg(m_calib.scanPoints));
+    const QString reqId = o.value("req_id").toString();
+    if (!acceptsReqId(reqId)) return;
+
+    ScanResult r;
+    r.reqId      = reqId;
+    r.ok         = o.value("ok").toBool();
+    r.sessionId  = o.value("session_id").toString();
+    r.scanId     = o.value("scan_id").toString();
+    r.pcdPath    = o.value("pcd").toString();
+    r.jsonPath   = o.value("json").toString();
+    r.rows       = o.value("rows").toInt();
+    r.columns    = o.value("columns").toInt();
+    r.points     = o.value("points").toVariant().toUInt();
+    r.expected   = o.value("expected").toVariant().toUInt();
+    r.durationS  = o.value("duration_s").toDouble();
+    r.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
+    emit scanResultUpdated(r);
 }
 
-// calib/result [TODO 토픽]: "02" 문서 §14.2 extrinsic/quality 스키마를 그대로 따른다고 가정.
-void MqttBridge::handleCalibResult(const QByteArray &payload) {
-    const auto root = QJsonDocument::fromJson(payload).object();
-    const auto quality = root.value("quality").toObject();
-    const auto extrinsic = root.value("extrinsic").toObject();
-    const auto translation = extrinsic.value("translation_m").toArray();
-    const auto quat = extrinsic.value("quaternion_xyzw").toArray();
-
-    m_calib.status      = quality.value("status").toString("FAIL");
-    m_calib.edgeRmsePx   = quality.value("edge_rmse_px").toDouble();
-    m_calib.inlierRatio  = quality.value("inlier_ratio").toDouble();
-    m_calib.retry        = quality.value("retry_count").toInt();
-    m_calib.failureReasons.clear();
-    for (const auto &v : quality.value("failure_reasons").toArray())
-        m_calib.failureReasons << v.toString();
-
-    for (int i = 0; i < 3 && i < translation.size(); ++i) m_calib.translationM[i] = translation[i].toDouble();
-    for (int i = 0; i < 4 && i < quat.size(); ++i) m_calib.quaternionXyzw[i] = quat[i].toDouble();
-
-    m_calib.stamp = QDateTime::currentDateTime();
-    emit calibUpdated(m_calib);
-    emit logLine("CHECK", QString("캘리브 결과 %1 — edge_rmse %2px, inlier %3%")
-                               .arg(m_calib.status)
-                               .arg(m_calib.edgeRmsePx, 0, 'f', 2)
-                               .arg(int(m_calib.inlierRatio * 100)));
-}
-
-void MqttBridge::handleImu(const QByteArray &payload) {
+void MqttBridge::handleEventProgress(const QByteArray &payload) {
     const auto o = QJsonDocument::fromJson(payload).object();
-    ImuState imu;
-    imu.roll  = o.contains("roll_deg")  ? o.value("roll_deg").toDouble()  : o.value("roll").toDouble();
-    imu.pitch = o.contains("pitch_deg") ? o.value("pitch_deg").toDouble() : o.value("pitch").toDouble();
-    emit imuUpdated(imu);
+    const QString reqId = o.value("req_id").toString();
+    if (!acceptsReqId(reqId)) return;
+
+    ScanProgress p;
+    p.reqId    = reqId;
+    p.points   = o.value("points").toVariant().toUInt();
+    p.expected = o.value("expected").toVariant().toUInt();
+    p.percent  = o.value("percent").toInt();
+    p.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
+    emit scanProgressUpdated(p);
 }
 
-// calib/objects [TODO 토픽]: WiseAI(Wisenet 네이티브 사람/차량 클래스) bbox를 카메라 단이
-// 캘리브 extrinsic으로 실좌표 변환해 발행한다고 가정 (아키텍처 V2 데이터 흐름).
-void MqttBridge::handleObjects(const QByteArray &payload) {
-    QVector<SpatialObject> out;
-    for (const auto &v : QJsonDocument::fromJson(payload).object().value("objects").toArray()) {
-        const auto o = v.toObject();
-        SpatialObject s;
-        s.cls     = o.value("class").toString();
-        s.posM    = QPointF(o.value("x").toDouble(), o.value("y").toDouble());
-        s.distM   = o.contains("dist") ? o.value("dist").toDouble() : std::hypot(s.posM.x(), s.posM.y());
-        s.channel = o.value("ch").toInt(1);
-        out.push_back(s);
-    }
-    emit objectsUpdated(out);
+void MqttBridge::handleEventError(const QByteArray &payload) {
+    const auto o = QJsonDocument::fromJson(payload).object();
+    const QString reqId = o.value("req_id").toString();
+    if (!acceptsReqId(reqId)) return;
+
+    KitError e;
+    e.reqId = reqId;
+    e.code  = o.value("code").toInt();
+    e.name  = o.value("name").toString();
+    e.msg   = o.value("msg").toString();
+    e.fatal = o.value("fatal").toBool();
+    e.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
+    emit kitErrorReceived(e);
 }

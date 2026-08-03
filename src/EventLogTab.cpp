@@ -24,6 +24,7 @@ QPair<QColor, QColor> tagColors(const QString &tag) {
         {"POWER",  {QColor("#1b2127"), QColor("#a9b4bd")}},
         {"LEVEL",  {QColor("#3a1a16"), QColor("#ff8175")}},
         {"RTSP",   {QColor("#152229"), QColor("#8fd9e2")}},
+        {"ERROR",  {QColor("#3a1a16"), QColor("#ff8175")}},
     };
     return kMap.value(tag, {QColor("#1b2127"), QColor("#a9b4bd")});
 }

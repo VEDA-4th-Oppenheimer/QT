@@ -17,15 +17,21 @@ StatusBar::StatusBar(QWidget *parent) : QFrame(parent) {
         return lb;
     };
 
-    m_power = mk("KIT POWER ON");
-    l->addWidget(m_power);
-    l->addWidget(mk("STM32 UART 921600 · OK"));
-    l->addWidget(mk("RPi4B 42.3 °C"));
+    m_state = mk("KIT OFFLINE");
+    l->addWidget(m_state);
+    m_link = mk("STM32 link —");
+    l->addWidget(m_link);
     l->addStretch(1);
     l->addWidget(mk("Qt 6 · CLion Build Debug-x64"));
 }
 
-void StatusBar::setPower(bool on) {
-    m_power->setText(on ? "KIT POWER ON" : "KIT POWER OFF");
-    m_power->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(on ? "#6fdcab" : "#ff9a92"));
+void StatusBar::setDaemonState(const DaemonState &s) {
+    m_state->setText(QString("KIT %1").arg(s.state));
+    const QString color =
+        (s.state == "IDLE" || s.state == "SCANNING") ? "#6fdcab" :
+        (s.state == "DISARM" || s.state == "OFFLINE") ? "#ff9a92" : "#e2a33c";
+    m_state->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(color));
+
+    m_link->setText(QString("STM32 link %1").arg(s.linkAlive ? "OK" : "DOWN"));
+    m_link->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(s.linkAlive ? "#5f6c78" : "#ff9a92"));
 }

@@ -7,3 +7,7 @@ datasets/
 
 # 실제 카메라 IP/RTSP 인증정보 — 커밋 금지. config/cameras.example.json 참고.
 config/cameras.json
+
+# 실제 MQTT 브로커 호스트/인증서 경로 — 커밋 금지. config/mqtt.example.json 참고.
+config/mqtt.json
+certs/

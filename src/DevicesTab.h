@@ -12,7 +12,7 @@ public:
     explicit DevicesTab(QWidget *parent = nullptr);
 
     void setImu(const ImuState &imu);
-    void setCalib(const CalibState &c);
+    void setScanProgress(const ScanProgress &p);
     void setChannelOnline(int channel, bool online);
 
 private:

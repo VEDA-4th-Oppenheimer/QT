@@ -1,33 +1,36 @@
-# SPATIAL·VMS — 1D LiDAR Pan-Tilt 자동 캘리브레이션 킷 Qt 관제 (VEDA-4th-Oppenheimer)
+# SPATIAL·VMS — ADTS 1D LiDAR Pan-Tilt 스캐너 킷 Qt 관제 (VEDA-4th-Oppenheimer)
 
 Hanwha Vision **PNM-C16083RVQ** 멀티센서 카메라 + **TOFSense-F2D** 1D LiDAR pan-tilt
 스캐너로 사람 표적 없이(targetless) camera-LiDAR 외부 파라미터(extrinsic)를 자동
-산출하는 킷의 Qt 데스크톱 관제 UI. 이 프로젝트(`이광진` 담당)의 범위는 **Qt 관제
-GUI + RTSP 4채널 스트리밍 + RPi Mosquitto 브로커 운영/MQTT 보안**이다.
+산출하는 킷의 Qt 데스크톱 관제 UI. **Qt 담당: 송영빈** — RPi 데몬과의 통신은
+`MQTT_INTERFACE_CONTRACT.md` v1.0(RPi 저장소 `docs/`, 데몬=이현우/브로커·인증서=이광진
+서명)을 그대로 구현한다.
 
 - **UI**: Qt6 Widgets, 다크 관제실 테마 (`src/Theme.h`)
-- **CCTV 영상**: RTSP 직접 연결(브로커 경유 아님). `src/RtspDecoder`가 FFmpeg
+- **CCTV 영상**: RTSP 직접 연결(MQTT 경유 아님). `src/RtspDecoder`가 FFmpeg
   (libavformat/avcodec/swscale)로 채널별 RTSP 스트림을 백그라운드 스레드에서
   디코딩해 `CameraTile`에 공급한다 (`config/cameras.json`에 설정된 채널만 — 없으면
   해당 채널은 Demo/Live 상태를 그대로 따른다).
-- **MQTT**: Eclipse Paho MQTT C++ (`src/MqttBridge`) — 스캔 진행/캘리브 결과 텔레메트리용.
-  브로커는 **RPi 에 상주**(Mosquitto, MQTT-over-TLS 8883)하며 Qt·카메라 단·통합
-  데몬이 모두 이 브로커의 클라이언트다. Homebrew에 Qt MQTT 애드온이 없어 Paho를 사용한다.
-- **데모 모드**: 실제 브로커/킷이 없어도 상단 메뉴 `모드 → Demo Mode` 토글로 스캔
-  세션 전체 흐름(SCAN → POINT CLOUD → FEATURES → COARSE/FINE → QUALITY GATE →
-  PASS)과 IMU 드리프트를 재생한다 (기본값 켜짐, `src/DemoBridge`). RTSP는 이
-  토글과 무관하게 `config/cameras.json`이 있으면 항상 동작한다.
+- **MQTT**: Eclipse Paho MQTT C++ (`src/MqttBridge`) — 스캔 제어/상태 전용
+  (`adts/kit1/...` 토픽). 브로커는 **RPi 에 상주**(Mosquitto)하며 Qt·카메라 단·통합
+  데몬이 모두 이 브로커의 클라이언트다. 포트 8883 + mTLS 가 기본이고, 인증서가 아직
+  없으면(`config/mqtt.json` 의 `cert_dir` 에 `ca.crt`/`qt-console.crt`/`qt-console.key`
+  가 없으면) 평문 1883 으로 degraded 접속한다 — 로컬 개발용.
+- **데모 모드**: 실제 브로커/킷이 없어도 상단 메뉴 `모드 → Demo Mode` 토글로 계약서의
+  실제 세션 흐름(`cmd/scan` → `state=SCANNING` → `event/progress` 2Hz → `state=EXPORT`
+  + `state/scan` → `state=IDLE`)과 IMU 드리프트를 재생한다 (기본값 켜짐, `src/DemoBridge`).
+  RTSP는 이 토글과 무관하게 `config/cameras.json`이 있으면 항상 동작한다.
 
-## 참고 문서 (Confluence, VPT space)
+## 참고 문서
 
-1. *1D LiDAR Pan-Tilt Actuator 기반 Camera Automatic Calibration 시스템 구축 계획* — 배경/타당성 검토
-2. *01. Point Cloud 생성 및 인계 계획* — STM32/RPi 스캔·PointCloudPackage 계약
-3. *02. Point Cloud 이후 Camera Automatic Calibration 상세 계획* — 캘리브 파이프라인/`extrinsic.yaml`·`quality.json` 스키마
-4. *Device 파트 아키텍처 및 역할 분담 V2* — 전체 시스템 아키텍처, MQTT 브로커 구성, 담당자 배정
-
-이 Qt 앱의 데이터 모델(`CalibState` 등)과 CALIBRATION 탭은 위 2/4번 문서의 실제
-스키마를 따른다. **MQTT 토픽 스키마는 아직 팀 협의 중**이며(이현우·이광진·이영민
-공통 과제), 아래 표의 `scan/*` 4개만 확정이고 나머지는 이 코드베이스의 placeholder다.
+1. `MQTT_INTERFACE_CONTRACT.md` v1.0 (RPi 저장소 `docs/`) — **이 앱의 MQTT 부분은
+   전적으로 이 문서를 따른다.** 토픽/페이로드/QoS/retain 을 바꾸려면 이 문서를 먼저
+   고쳐야 한다.
+2. *Device 파트 아키텍처 및 역할 분담 V2* (Confluence) — 전체 시스템 아키텍처, RTSP 경로 확인용.
+3. *01/02. Point Cloud 생성·Camera Automatic Calibration 계획* (Confluence) — 카메라
+   단 캘리브 결과(NCC/edge_rmse/extrinsic) 스키마. **이 MQTT 계약과는 별개**이며
+   발행 토픽이 아직 정해지지 않았다(계약 §9 미결) — 그래서 이 Qt 앱은 캘리브
+   품질/RT 를 아직 표시하지 않는다.
 
 ## 의존성 설치 (macOS / Homebrew)
 
@@ -54,8 +57,16 @@ rtsp://USER:PASSWORD@CAMERA_IP:554/<0~3>/profile2/media.smp
 
 센서(채널) 번호 0~3이 CH1~CH4에 대응한다. `profile2`는 서브스트림, `profile1`은 고해상도
 메인스트림. MVP 범위는 대표 1채널(CH1)이지만 하드웨어가 4채널 모두 지원해 4개 다 붙였다.
-CLion에서 실행할 경우 Run/Debug configuration의 working directory를 프로젝트 루트로
-맞춰야 `config/cameras.json`을 찾는다.
+
+## MQTT 브로커 설정
+
+`config/mqtt.example.json`을 `config/mqtt.json`으로 복사해 RPi IP/포트/인증서 경로를
+채운다 (gitignore 대상). 인증서 3개(`ca.crt`/`qt-console.crt`/`qt-console.key`)는
+`cert_dir` 아래 두면 자동으로 `ssl://`(mTLS)를 쓰고, 없으면 `tcp://` 평문으로
+degraded 접속한다. 개인키(`.key`)는 어떤 경우에도 저장소에 커밋하지 않는다.
+
+CLion에서 실행할 경우 Run/Debug configuration의 working directory를 프로젝트
+루트로 맞춰야 `config/` 파일들을 찾는다.
 
 ## 빌드
 
@@ -68,53 +79,55 @@ cmake --build build
 ## 화면 구성
 
 5개 탭: `메인 대시보드`(기본) / `CALIBRATION` / `DEVICES / MQTT` / `RGB-D DATASET` / `EVENT LOG`.
-시각 디자인(색상·간격·상태값 토큰)은 초기 UI 디자인 시안을 따르되(`src/Theme.h`),
-CALIBRATION/DEVICES 탭의 데이터·용어는 위 참고 문서의 실제 시스템 스펙으로 교체했다.
+TopBar 버튼(HOME/SCAN/STOP/DISARM)의 활성화는 계약서 §5 상태-버튼 매핑을 따른다 —
+DISARM 만 상태와 무관하게 항상 활성(비상정지).
 
-## MQTT 토픽
+## MQTT 토픽 (MQTT_INTERFACE_CONTRACT.md v1.0, 전부 확정)
 
-| 토픽 | 방향 | 상태 | 페이로드 |
-|---|---|---|---|
-| `scan/start` | 발행 | **확정** | `{"pan_start_ddeg","pan_end_ddeg","tilt_start_ddeg","tilt_end_ddeg","step_ddeg","z_offset_mm"}` — CMD_SCAN_START 트리거 |
-| `scan/stop` | 발행 | **확정** | 스캔 중단 |
-| `scan/status` | 구독 | **확정** | `{"percent","points","expected","state"}` (수평 게이트 실패 시 `state:"tilt_ng"`) |
-| `scan/done` | 구독 | **확정** | `{"path","point_count","stm_reported"}` — 포인트클라우드 파일 경로 (본문에 점 데이터 안 실림) |
-| `calib/result` | 구독 | TODO(미정) | "02" 문서 §14.2 `quality`/`extrinsic` 스키마 가정 (`edge_rmse_px`,`inlier_ratio`,`translation_m`,`quaternion_xyzw`,...) |
-| `calib/objects` | 구독 | TODO(미정) | WiseAI(Wisenet 네이티브 사람/차량) bbox → 실좌표 변환 결과 |
-| `imu/level` | 구독 | TODO(미정) | `{"roll_deg","pitch_deg"}` — 상시 브로드캐스트 여부 자체가 미결 (현재는 스캔 전 1회 게이트 판정용) |
+| 토픽 | 방향 | QoS | Retained | 내용 |
+|---|---|---|---|---|
+| `adts/kit1/cmd/scan` | 발행 | 1 | **금지** | 스캔 시작 — `{req_id, pan_ddeg:[a,b], tilt_ddeg:[a,b], step_ddeg, sensor_height_mm}` |
+| `adts/kit1/cmd/stop` | 발행 | 1 | 금지 | 스캔 중단 — `{req_id}` |
+| `adts/kit1/cmd/home` | 발행 | 1 | 금지 | 홈만 수행 — `{req_id}` (데몬 쪽 아직 미지원, TODO) |
+| `adts/kit1/cmd/disarm` | 발행 | 1 | 금지 | 안전정지 — `{req_id}` |
+| `adts/kit1/state/daemon` | 구독 | 1 | 예 | FSM/링크/IMU. LWT 로 데몬 사망 시 `state:"OFFLINE"` 자동 수신 |
+| `adts/kit1/state/scan` | 구독 | 1 | 예 | 스캔 결과 — 파일 경로만(점 데이터 없음) |
+| `adts/kit1/event/progress` | 구독 | 0 | 아니오 | 진행률 ~2Hz, 유실 가정(완료 판정은 state 로) |
+| `adts/kit1/event/error` | 구독 | 1 | 아니오 | 오류 코드/메시지 |
 
-킷에는 "전원 ON/OFF" 개념이 없다(TopBar POWER 버튼은 실제 프로토콜과 무관 — CMD_HOME/
-SCAN_START/STOP/DISARM 뿐). 영상(`cctv/chN/h264` 류)은 MQTT를 타지 않는다 — RTSP 직결.
+req_id 는 Qt 가 명령마다 생성(`MqttBridge::newReqId`)하고, 자신이 보낸 req_id 가
+아닌 응답은 무시한다(`acceptsReqId`, 계약 §4).
 
 ## 구조
 
 ```
 src/
 ├── main.cpp / MainWindow      # 5탭 셸, 시그널 배선, Demo/Live 모드 전환
-├── Theme.h / Models.h         # 디자인 토큰, 공용 데이터 모델(CalibState 등 실제 스키마)
-├── DataBridge / MqttBridge / DemoBridge   # 텔레메트리 공용 시그널 인터페이스 + 구현체
+├── Theme.h / Models.h         # 디자인 토큰, 계약 스키마 데이터 모델
+│                                 (DaemonState/ScanResult/ScanProgress/KitError)
+├── DataBridge / MqttBridge / DemoBridge   # 계약 공용 시그널 인터페이스 + 구현체
 ├── RtspDecoder / RtspSource                # 채널별 RTSP 디코딩(FFmpeg) + config 로더
-├── TopBar / TiltBanner / StatusBar        # 상단/경고/하단 바
+├── TopBar / TiltBanner / StatusBar        # 상단(HOME/SCAN/STOP/DISARM)/경고/하단 바
 ├── CameraTile / TopViewWidget / TopViewPanel  # 대시보드 좌(CCTV)/우(Top-View) 패널
 └── CalibrationTab / DevicesTab / DatasetTab / EventLogTab   # 나머지 4개 탭
 
 config/
-├── cameras.example.json       # 커밋됨 — RTSP URL 형식 예시
-└── cameras.json               # gitignore 대상 — 실제 카메라 IP/계정정보
+├── cameras.example.json / cameras.json   # RTSP — 후자는 gitignore
+└── mqtt.example.json / mqtt.json         # MQTT 브로커/인증서 경로 — 후자는 gitignore
 ```
 
 ## 남은 TODO
 
-1. ~~영상 디코딩~~ — RTSP+FFmpeg로 완료 (`src/RtspDecoder`). VideoToolbox 하드웨어 가속은
-   아직 미적용(소프트웨어 디코드); 채널 수/해상도가 늘면 고려.
-2. **MQTT 토픽 스키마 확정** — `calib/result`·`calib/objects`·`imu/level`은 팀 협의 후
-   `MqttBridge.cpp`의 토픽 상수만 바꾸면 된다(핸들러는 문서 스키마대로 이미 구현됨).
-3. `scan/done`이 포인트클라우드 "파일 경로"만 준다 — Top-View에 실제 라이다 벽/에지를
-   그리려면 그 파일(`organized_cloud.pcd`/`range_image`)을 읽어오는 전달 방식(scp/http/
-   공유폴더, 아직 미정)이 필요하다. 지금은 Demo Mode에서만 정적 방 외곽을 그린다.
-4. CALIBRATION 탭의 8단계 파이프라인 시각화는 "02" 문서 아키텍처를 따른 근사치다 —
-   실제 코어(`calibration/core/`) 구현이 나오면 단계명/조건을 다시 맞춘다.
-5. `RGB-D DATASET` 탭은 `datasets/<set>/meta.json`을 스캔한다(없으면 예시로 대체).
-   실제로는 `calibration_sessions/<session_id>/result/{quality.json,extrinsic.yaml}`
-   구조("02" 문서 §14.1)이므로, 카메라 단 세션 출력 위치가 정해지면 그에 맞춰야 한다.
-6. TopBar POWER 버튼의 실제 의미(전원과 무관, DISARM/rearm에 가까움)를 재정의할지 검토.
+1. ~~영상 디코딩~~ — RTSP+FFmpeg로 완료 (`src/RtspDecoder`).
+2. ~~MQTT 프로토콜 구현~~ — `MQTT_INTERFACE_CONTRACT.md` v1.0 그대로 구현 완료.
+   실제 인증서(`config/mqtt.json`)와 RPi 데몬이 준비되면 바로 붙는다.
+3. `cmd/home` — 데몬 쪽에 "스캔 없이 홈만" 트리거하는 API가 아직 없다(코어 담당
+   이현우 협의 필요). Qt 는 이미 발행하지만 데몬이 무시한다.
+4. 카메라 단 캘리브 결과(NCC/edge_rmse/extrinsic) 표시 — 발행 토픽이 아직 없다
+   (이영민 협의, 참고문서 3번 §9). 토픽이 정해지면 CALIBRATION 탭에 QUALITY
+   패널을 추가한다.
+5. `state/scan`이 포인트클라우드 "파일 경로"만 준다 — Top-View에 실제 라이다
+   벽/에지를 그리려면 그 파일을 읽어오는 전달 방식(scp/http/공유폴더, 계약 §9
+   미결)이 필요하다. 지금은 Demo Mode에서만 정적 방 외곽을 그린다.
+6. `RGB-D DATASET` 탭은 `datasets/<set>/meta.json`을 스캔한다(없으면 예시로 대체) —
+   실제 캡처 파이프라인 위치가 정해지면 맞춘다.

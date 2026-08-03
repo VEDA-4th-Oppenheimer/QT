@@ -6,28 +6,28 @@ class QPlainTextEdit;
 class QLabel;
 class QProgressBar;
 
-// CALIBRATION 탭: 8단계 파이프라인 + 로그 + EXTRINSIC(translation/quaternion) + QUALITY 카드.
-// "02. Point Cloud 이후 Camera Automatic Calibration" 문서의 실제 파이프라인/스키마를 따른다.
+// CALIBRATION 탭: 스캔 세션 상태 + 진행률 + 로그.
+// MQTT_INTERFACE_CONTRACT.md v1.0 은 스캔 제어/상태만 규정한다 — 카메라 단 캘리브
+// 결과(NCC/edge_rmse/extrinsic)는 아직 발행 토픽이 정해지지 않아(§9 미결) 여기서
+// 다루지 않는다. 그 데이터가 오는 토픽이 정해지면 이 탭에 QUALITY 패널을 추가한다.
 class CalibrationTab : public QWidget {
     Q_OBJECT
 public:
     explicit CalibrationTab(QWidget *parent = nullptr);
 
-    void setCalib(const CalibState &c);
+    void setDaemonState(const DaemonState &s);
+    void setScanProgress(const ScanProgress &p);
+    void setScanResult(const ScanResult &r);
     void appendLog(const QString &tag, const QString &msg);
 
-signals:
-    void exportRequested(const QString &format);   // "json" / "yaml"
-
 private:
-    QLabel *m_stepBadge[8];
-    QLabel *m_stepState[8];
+    QLabel *m_stepBadge[4];
+    QLabel *m_stepState[4];
     QPlainTextEdit *m_log;
 
-    QLabel *m_translationCell[3];
-    QLabel *m_quatCell[4];
-
-    QLabel *m_edgeRmseValue;
-    QProgressBar *m_inlierBar;
-    QLabel *m_inlierValue, *m_nccValue, *m_retryValue, *m_statusValue;
+    QLabel *m_stateValue;
+    QProgressBar *m_progressBar;
+    QLabel *m_pointsValue, *m_expectedValue;
+    QLabel *m_sessionValue, *m_scanIdValue, *m_pcdValue, *m_jsonValue;
+    QLabel *m_rowsColsValue, *m_durationValue;
 };

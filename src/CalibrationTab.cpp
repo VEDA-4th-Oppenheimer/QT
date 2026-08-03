@@ -2,26 +2,20 @@
 #include "Theme.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QGridLayout>
 #include <QPlainTextEdit>
 #include <QLabel>
 #include <QFrame>
-#include <QPushButton>
 #include <QProgressBar>
 #include <QDateTime>
-#include <cmath>
+#include <QLocale>
 
 namespace {
-// "02. Point Cloud 이후 Camera Automatic Calibration" §3 아키텍처 flowchart를 그대로 8단계로 나눔.
-const char *kSteps[8][2] = {
-    {"1 · SCAN",           "STM32 연속 pan sweep + encoder 동기 취득 (protocol.h v5)"},
-    {"2 · POINT CLOUD",    "(pan,tilt,d) -> (x,y,z) 변환, organized grid + point cloud QA"},
-    {"3 · INPUT GATE",     "PointCloudPackage schema/topology/intrinsic 검증 (G0)"},
-    {"4 · SCENE FEATURES", "Camera edge distance transform + LiDAR depth-edge/LSD 라인 추출"},
-    {"5 · COARSE SEARCH",  "기구 실측 bound 안에서 multi-start coarse pose 후보 생성"},
-    {"6 · FINE SE(3)",     "6-DoF nonlinear optimize (edge + line residual, robust loss)"},
-    {"7 · MULTI-SCENE",    "Joint refinement + hold-out scene 검증"},
-    {"8 · QUALITY GATE",   "edge_rmse/inlier/관측성 복합 판정 — PASS 시 active 승격"},
+// 계약이 실제로 규정하는 FSM(§5)만 반영한다 — 추측성 알고리즘 단계는 넣지 않는다.
+const char *kSteps[4][2] = {
+    {"1 · IDLE",     "대기 — cmd/scan 수신 시 SCANNING 진입 (수평 게이트 통과 필요)"},
+    {"2 · SCANNING", "STM32 연속 pan sweep, event/progress ~2Hz 수신"},
+    {"3 · EXPORT",   "포인트클라우드 파일 마감, state/scan 발행"},
+    {"4 · IDLE",     "세션 종료 — 다음 cmd/scan 대기"},
 };
 
 QLabel *statRow(QWidget *parent, QVBoxLayout *into, const QString &label) {
@@ -36,14 +30,6 @@ QLabel *statRow(QWidget *parent, QVBoxLayout *into, const QString &label) {
     into->addLayout(row);
     return v;
 }
-
-QLabel *extrinsicCell(QWidget *parent, QGridLayout *grid, int row, int col) {
-    auto *cell = new QLabel("0.000", parent);
-    cell->setAlignment(Qt::AlignCenter);
-    cell->setStyleSheet(Theme::mono(11) + "color:#c7d1da;background:#101519;border-radius:3px;padding:6px 2px;");
-    grid->addWidget(cell, row, col);
-    return cell;
-}
 }
 
 CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
@@ -51,19 +37,19 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     root->setContentsMargins(10, 10, 10, 10);
     root->setSpacing(10);
 
-    // ---- 좌측: 파이프라인 + 로그 -----------------------------------------
+    // ---- 좌측: 세션 흐름 + 로그 -----------------------------------------
     auto *left = new QVBoxLayout;
     left->setSpacing(7);
 
-    auto *pipeHead = new QLabel("TARGETLESS CALIBRATION PIPELINE", this);
+    auto *pipeHead = new QLabel("SCAN SESSION", this);
     pipeHead->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
-    auto *pipeSub = new QLabel(QString::fromUtf8("Scan → Point Cloud → Coarse-to-Fine SE(3) → Quality Gate"), this);
+    auto *pipeSub = new QLabel(QString::fromUtf8("MQTT_INTERFACE_CONTRACT.md §5 상태 흐름"), this);
     pipeSub->setStyleSheet("color:#8e9aa5;font-size:11px;");
     left->addWidget(pipeHead);
     left->addWidget(pipeSub);
     left->addSpacing(4);
 
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 4; ++i) {
         auto *row = new QFrame(this);
         row->setObjectName("panel");
         auto *rl = new QHBoxLayout(row);
@@ -75,12 +61,12 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
         m_stepBadge[i]->setAlignment(Qt::AlignCenter);
 
         auto *id = new QLabel(kSteps[i][0], row);
-        id->setFixedWidth(170);
+        id->setFixedWidth(120);
         id->setStyleSheet(Theme::mono(11, 500) + "color:#dbe2e8;");
         auto *desc = new QLabel(kSteps[i][1], row);
         desc->setStyleSheet("color:#8e9aa5;");
 
-        m_stepState[i] = new QLabel("PENDING", row);
+        m_stepState[i] = new QLabel("—", row);
         m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#5f6c78;");
 
         rl->addWidget(m_stepBadge[i]);
@@ -97,79 +83,56 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     m_log->setReadOnly(true);
     left->addWidget(m_log, 1);
 
-    // ---- 우측: EXTRINSIC + QUALITY -----------------------------------------
+    // ---- 우측: 진행률 + 마지막 결과 -----------------------------------------
     auto *right = new QVBoxLayout;
     right->setSpacing(10);
 
-    auto *rtPanel = new QFrame(this);
-    rtPanel->setObjectName("panel");
-    auto *rtl = new QVBoxLayout(rtPanel);
-    rtl->setContentsMargins(11, 10, 11, 10);
-    rtl->setSpacing(8);
-    auto *rtTitle = new QLabel("EXTRINSIC  T_camera_ch1_lidar_scan", rtPanel);
-    rtTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
-    rtl->addWidget(rtTitle);
-
-    auto *tLabel = new QLabel("translation_m  [x, y, z]", rtPanel);
-    tLabel->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
-    rtl->addWidget(tLabel);
-    auto *tGrid = new QGridLayout;
-    tGrid->setSpacing(4);
-    for (int i = 0; i < 3; ++i) m_translationCell[i] = extrinsicCell(rtPanel, tGrid, 0, i);
-    rtl->addLayout(tGrid);
-
-    auto *qLabel = new QLabel("quaternion_xyzw", rtPanel);
-    qLabel->setStyleSheet(Theme::mono(10) + "color:#5f6c78;margin-top:4px;");
-    rtl->addWidget(qLabel);
-    auto *qGrid = new QGridLayout;
-    qGrid->setSpacing(4);
-    for (int i = 0; i < 4; ++i) m_quatCell[i] = extrinsicCell(rtPanel, qGrid, 0, i);
-    rtl->addLayout(qGrid);
-
-    auto *exportRow = new QHBoxLayout;
-    auto *exportJson = new QPushButton("EXPORT JSON", rtPanel);
-    exportJson->setObjectName("accent");
-    auto *exportYaml = new QPushButton("EXPORT YAML", rtPanel);
-    connect(exportJson, &QPushButton::clicked, this, [this] { emit exportRequested("json"); });
-    connect(exportYaml, &QPushButton::clicked, this, [this] { emit exportRequested("yaml"); });
-    exportRow->addWidget(exportJson);
-    exportRow->addWidget(exportYaml);
-    rtl->addLayout(exportRow);
-
-    auto *qualityPanel = new QFrame(this);
-    qualityPanel->setObjectName("panel");
-    auto *ql = new QVBoxLayout(qualityPanel);
-    ql->setContentsMargins(11, 10, 11, 10);
-    ql->setSpacing(6);
-    auto *qTitle = new QLabel("QUALITY", qualityPanel);
-    qTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
-    m_edgeRmseValue = new QLabel("0.00 px", qualityPanel);
-    m_edgeRmseValue->setStyleSheet(Theme::mono(30, 700) + "color:#4bbd85;");
-    auto *edgeCaption = new QLabel("edge RMSE (gate: ≤ 3 px)", qualityPanel);
-    edgeCaption->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
-    m_inlierBar = new QProgressBar(qualityPanel);
-    m_inlierBar->setRange(0, 100);
-    m_inlierBar->setTextVisible(false);
-    m_inlierBar->setFixedHeight(5);
-    m_inlierBar->setStyleSheet(
+    auto *progPanel = new QFrame(this);
+    progPanel->setObjectName("panel");
+    auto *pl = new QVBoxLayout(progPanel);
+    pl->setContentsMargins(11, 10, 11, 10);
+    pl->setSpacing(6);
+    auto *pTitle = new QLabel("PROGRESS", progPanel);
+    pTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    m_stateValue = new QLabel("OFFLINE", progPanel);
+    m_stateValue->setStyleSheet(Theme::mono(24, 700) + "color:#5f6c78;");
+    m_progressBar = new QProgressBar(progPanel);
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setTextVisible(false);
+    m_progressBar->setFixedHeight(5);
+    m_progressBar->setStyleSheet(
         "QProgressBar{background:#161d23;border:none;border-radius:2px;}"
-        "QProgressBar::chunk{background:#4bbd85;border-radius:2px;}");
+        "QProgressBar::chunk{background:#3fbfcc;border-radius:2px;}");
+    pl->addWidget(pTitle);
+    pl->addWidget(m_stateValue);
+    pl->addWidget(m_progressBar);
 
-    ql->addWidget(qTitle);
-    ql->addWidget(m_edgeRmseValue);
-    ql->addWidget(edgeCaption);
-    ql->addWidget(m_inlierBar);
+    auto *progStats = new QVBoxLayout;
+    progStats->setSpacing(4);
+    m_pointsValue   = statRow(progPanel, progStats, "points");
+    m_expectedValue = statRow(progPanel, progStats, "expected");
+    pl->addLayout(progStats);
 
-    auto *statBox = new QVBoxLayout;
-    statBox->setSpacing(4);
-    m_statusValue = statRow(qualityPanel, statBox, "status");
-    m_inlierValue = statRow(qualityPanel, statBox, "inlier_ratio");
-    m_nccValue    = statRow(qualityPanel, statBox, "ncc (진단용)");
-    m_retryValue  = statRow(qualityPanel, statBox, "retry");
-    ql->addLayout(statBox);
+    auto *resultPanel = new QFrame(this);
+    resultPanel->setObjectName("panel");
+    auto *rl2 = new QVBoxLayout(resultPanel);
+    rl2->setContentsMargins(11, 10, 11, 10);
+    rl2->setSpacing(6);
+    auto *rTitle = new QLabel("LAST SCAN RESULT  (state/scan)", resultPanel);
+    rTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    rl2->addWidget(rTitle);
+    auto *resultStats = new QVBoxLayout;
+    resultStats->setSpacing(4);
+    m_sessionValue  = statRow(resultPanel, resultStats, "session_id");
+    m_scanIdValue   = statRow(resultPanel, resultStats, "scan_id");
+    m_rowsColsValue = statRow(resultPanel, resultStats, "rows × columns");
+    m_durationValue = statRow(resultPanel, resultStats, "duration_s");
+    m_pcdValue      = statRow(resultPanel, resultStats, "pcd");
+    m_jsonValue     = statRow(resultPanel, resultStats, "json");
+    rl2->addLayout(resultStats);
 
-    right->addWidget(rtPanel);
-    right->addWidget(qualityPanel);
+    right->addWidget(progPanel);
+    right->addWidget(resultPanel);
     right->addStretch(1);
 
     auto *rightWrap = new QWidget(this);
@@ -182,45 +145,58 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     root->addWidget(leftWrap, 1);
     root->addWidget(rightWrap);
 
-    setCalib({});
+    setDaemonState({});
+    setScanProgress({});
 }
 
-void CalibrationTab::setCalib(const CalibState &c) {
-    const int completed = qBound(0, int(std::round(c.progress / 12.5)), 8);
-    const bool passed = (c.status == "PASS");
-    for (int i = 0; i < 8; ++i) {
-        const bool isLast = (i == 7);
-        if (i < completed) {
-            const bool pass = isLast && passed;
+void CalibrationTab::setDaemonState(const DaemonState &s) {
+    m_stateValue->setText(s.state);
+    const QString color =
+        (s.state == "IDLE")     ? Theme::Ok.name() :
+        (s.state == "SCANNING") ? Theme::AccentBright.name() :
+        (s.state == "EXPORT")   ? Theme::Warn.name() :
+        (s.state == "DISARM")   ? Theme::DangerText.name() : Theme::TextFaint.name();
+    m_stateValue->setStyleSheet(Theme::mono(24, 700) + QString("color:%1;").arg(color));
+
+    int active = -1;
+    if (s.state == "IDLE") active = 0;
+    else if (s.state == "SCANNING") active = 1;
+    else if (s.state == "EXPORT") active = 2;
+
+    for (int i = 0; i < 4; ++i) {
+        if (i == active) {
+            m_stepBadge[i]->setText(QString::fromUtf8("●"));
+            m_stepBadge[i]->setStyleSheet("border-radius:3px;background:#152229;color:#8fd9e2;" + Theme::mono(10, 700));
+            m_stepState[i]->setText("ACTIVE");
+            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#8fd9e2;");
+        } else if (active >= 0 && i < active) {
             m_stepBadge[i]->setText(QString::fromUtf8("✓"));
-            m_stepBadge[i]->setStyleSheet(QString("border-radius:3px;background:%1;color:%2;")
-                .arg(pass ? "#16241d" : "#152229").arg(pass ? "#6fdcab" : "#8fd9e2") + Theme::mono(10, 700));
-            m_stepState[i]->setText(pass ? "PASS" : "DONE");
-            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) +
-                QString("color:%1;").arg(pass ? "#6fdcab" : "#8fd9e2"));
+            m_stepBadge[i]->setStyleSheet("border-radius:3px;background:#16241d;color:#6fdcab;" + Theme::mono(10, 700));
+            m_stepState[i]->setText("DONE");
+            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#6fdcab;");
         } else {
             m_stepBadge[i]->setText("");
             m_stepBadge[i]->setStyleSheet("border-radius:3px;background:#161d23;border:1px solid #222c34;");
-            m_stepState[i]->setText("PENDING");
+            m_stepState[i]->setText("—");
             m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#5f6c78;");
         }
     }
+}
 
-    const bool rmseOk = c.edgeRmsePx > 0.0 && c.edgeRmsePx <= 3.0;
-    m_edgeRmseValue->setText(QString("%1 px").arg(c.edgeRmsePx, 0, 'f', 2));
-    m_edgeRmseValue->setStyleSheet(Theme::mono(30, 700) +
-        QString("color:%1;").arg(rmseOk ? "#4bbd85" : "#ff8175"));
-    m_inlierBar->setValue(int(c.inlierRatio * 100));
+void CalibrationTab::setScanProgress(const ScanProgress &p) {
+    m_progressBar->setValue(p.percent);
+    m_pointsValue->setText(QLocale().toString(p.points));
+    m_expectedValue->setText(QLocale().toString(p.expected));
+}
 
-    m_statusValue->setText(c.status);
-    m_statusValue->setStyleSheet(Theme::mono(11) +
-        QString("color:%1;").arg(passed ? "#6fdcab" : (c.status == "FAIL" ? "#ff8175" : "#c7d1da")));
-    m_inlierValue->setText(QString("%1%").arg(int(c.inlierRatio * 100)));
-    m_nccValue->setText(QString::number(c.ncc, 'f', 3));
-    m_retryValue->setText(QString("%1 / %2").arg(c.retry).arg(c.maxRetry));
-
-    for (int i = 0; i < 3; ++i) m_translationCell[i]->setText(QString::number(c.translationM[i], 'f', 3));
-    for (int i = 0; i < 4; ++i) m_quatCell[i]->setText(QString::number(c.quaternionXyzw[i], 'f', 3));
+void CalibrationTab::setScanResult(const ScanResult &r) {
+    m_progressBar->setValue(100);
+    m_sessionValue->setText(r.sessionId);
+    m_scanIdValue->setText(r.scanId);
+    m_rowsColsValue->setText(QString("%1 × %2").arg(r.rows).arg(r.columns));
+    m_durationValue->setText(QString("%1 s").arg(r.durationS, 0, 'f', 1));
+    m_pcdValue->setText(r.pcdPath);
+    m_jsonValue->setText(r.jsonPath);
 }
 
 void CalibrationTab::appendLog(const QString &tag, const QString &msg) {

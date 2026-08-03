@@ -75,21 +75,21 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     tableHead->addWidget(qos);
     root->addLayout(tableHead);
 
-    // 영상은 MQTT가 아니라 RTSP 직결(RtspSource, 대시보드 타일 참고). 아래는 실제
-    // STM32<->RPi<->Qt MQTT 계약 — scan/* 4개는 확정, 나머지는 팀 협의 중인 토픽명이다
-    // ("Device 파트 아키텍처 및 역할 분담 V2" §7 미결: "MQTT 토픽 스키마 확정").
+    // 영상은 MQTT가 아니라 RTSP 직결(RtspSource, 대시보드 타일 참고). 아래는
+    // MQTT_INTERFACE_CONTRACT.md v1.0 그대로 — adts/kit1/... 전부 확정 토픽.
     struct Row { const char *topic, *rate, *desc, *state; };
-    const Row rows[7] = {
-        {"scan/start",    "on-demand", "Qt -> RPi: 스캔 시작 (CMD_SCAN_START 트리거)",  "TX"},
-        {"scan/stop",     "on-demand", "Qt -> RPi: 스캔 중단",                          "TX"},
-        {"scan/status",   "~1 Hz",     "RPi -> Qt: 진행률 (percent/points/expected)",   "RX"},
-        {"scan/done",     "on-demand", "RPi -> Qt: 포인트클라우드 파일 경로",           "RX"},
-        {"calib/result",  "on-demand", "카메라 단 -> Qt: 캘리브 품질/extrinsic",        "TODO"},
-        {"calib/objects", "~10 Hz",    "카메라 단 -> Qt: WiseAI bbox 실좌표",           "TODO"},
-        {"imu/level",     "?",         "RPi -> Qt: 수평 게이트 상태 (상시 여부 미결)",  "TODO"},
+    const Row rows[8] = {
+        {"adts/kit1/cmd/scan",       "on-demand", "Qt -> 데몬: 스캔 시작 (retain 금지)",     "TX"},
+        {"adts/kit1/cmd/stop",       "on-demand", "Qt -> 데몬: 스캔 중단",                    "TX"},
+        {"adts/kit1/cmd/home",       "on-demand", "Qt -> 데몬: 홈만 수행",                    "TX"},
+        {"adts/kit1/cmd/disarm",     "on-demand", "Qt -> 데몬: 안전정지",                     "TX"},
+        {"adts/kit1/state/daemon",   "5s + 변경시","데몬 -> Qt: FSM·링크·IMU (retained, LWT)", "RX"},
+        {"adts/kit1/state/scan",     "on-demand", "데몬 -> Qt: 스캔 결과 파일 경로 (retained)","RX"},
+        {"adts/kit1/event/progress", "~2 Hz",     "데몬 -> Qt: 진행률 (QoS0, 유실 가정)",      "RX"},
+        {"adts/kit1/event/error",    "on-demand", "데몬 -> Qt: 오류 코드/메시지",             "RX"},
     };
 
-    m_table = new QTableWidget(7, 4, this);
+    m_table = new QTableWidget(8, 4, this);
     m_table->setHorizontalHeaderLabels({"TOPIC", "RATE", "DESC", "STATE"});
     m_table->verticalHeader()->hide();
     m_table->horizontalHeader()->setStretchLastSection(true);
@@ -116,10 +116,16 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     root->addWidget(m_table, 1);
 
     setImu({});
-    setCalib({});
+    setScanProgress({});
 }
 
 void DevicesTab::setImu(const ImuState &imu) {
+    if (!imu.valid) {
+        m_mpuDot->setStyleSheet("color:#5f6c78;font-size:8px;");
+        m_mpuValue->setText("N/A · 미구현");
+        m_mpuValue->setStyleSheet(Theme::mono(12) + "color:#5f6c78;");
+        return;
+    }
     const bool level = imu.level();
     m_mpuDot->setStyleSheet(QString("color:%1;font-size:8px;").arg(level ? "#4bbd85" : "#e2a33c"));
     m_mpuValue->setText(level
@@ -128,10 +134,10 @@ void DevicesTab::setImu(const ImuState &imu) {
     m_mpuValue->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(level ? "#6fdcab" : "#ff8175"));
 }
 
-void DevicesTab::setCalib(const CalibState &c) {
-    const int pct = c.expectedPoints > 0 ? int(qint64(c.scanPoints) * 100 / c.expectedPoints) : 0;
-    m_tofValue->setText(QString("READY · %1 / %2 pts (%3%)")
-                             .arg(c.scanPoints).arg(c.expectedPoints).arg(pct));
+void DevicesTab::setScanProgress(const ScanProgress &p) {
+    const int pct = p.expected > 0 ? int(qint64(p.points) * 100 / p.expected) : p.percent;
+    m_tofValue->setText(QString("SCANNING · %1 / %2 pts (%3%)")
+                             .arg(p.points).arg(p.expected).arg(pct));
 }
 
 void DevicesTab::setChannelOnline(int /*channel*/, bool /*online*/) {

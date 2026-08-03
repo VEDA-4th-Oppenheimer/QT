@@ -1,5 +1,6 @@
 #include "DemoBridge.h"
 #include <QDateTime>
+#include <QUuid>
 #include <QVector>
 #include <cmath>
 
@@ -14,7 +15,8 @@ void DemoBridge::start() {
     emit brokerStateChanged(false);
     QTimer::singleShot(600, this, [this] {
         emit brokerStateChanged(true);
-        emit logLine("MQTT", QStringLiteral("데모 브로커 시뮬레이션 — 8개 토픽 구독"));
+        emit logLine("MQTT", QStringLiteral("데모 브로커 시뮬레이션 — state/#·event/# 구독"));
+        publishDaemonState("IDLE");
     });
 
     emitChannelDefaults();
@@ -22,14 +24,34 @@ void DemoBridge::start() {
 
     m_imuTimer.start();
     m_objTimer.start();
-
-    m_calibStep = 0;
-    runCalibScript();
 }
 
 void DemoBridge::stop() {
     m_imuTimer.stop();
     m_objTimer.stop();
+}
+
+QString DemoBridge::newReqId() {
+    m_reqId = QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    return m_reqId;
+}
+
+void DemoBridge::publishDaemonState(const QString &state) {
+    m_daemonState = state;
+    DaemonState s;
+    s.state       = state;
+    s.online      = true;
+    s.linkAlive   = true;
+    s.homed       = true;
+    s.scanning    = (state == "SCANNING");
+    s.curPanDdeg  = 0;
+    s.curTiltDdeg = 0;
+    s.lastErr     = 0;
+    s.level.valid = true;
+    s.level.roll  = m_lastRoll;
+    s.level.pitch = m_lastPitch;
+    s.ts = QDateTime::currentDateTime();
+    emit daemonStateUpdated(s);
 }
 
 void DemoBridge::emitChannelDefaults() {
@@ -56,62 +78,59 @@ void DemoBridge::emitEdges() {
     emit mapEdgesUpdated(edges);
 }
 
-// "01. Point Cloud 생성 및 인계 계획" + "02. Point Cloud 이후 Camera Automatic
-// Calibration 상세 계획" 문서의 실제 세션 흐름을 재생한다: STM32 스캔(scan/status·
-// scan/done) -> 카메라 단 캘리브(현재 토픽 미정, calib/result 로 가정) -> quality
-// gate PASS. edge_rmse_px/inlier_ratio 가 메인 지표이고 NCC 는 진단용 참고값이다
-// (문서 §11.3) — 낮은 edge_rmse 로 한 번 실패시켜 auto-retry(최대 2회)를 보여준다.
-void DemoBridge::runCalibScript() {
-    struct Item {
-        int delayMs; QString tag; QString msg; QString status;
-        int progress; quint32 points, expected; int retry;
-        double edgeRmse, inlier, ncc;
-        bool haveExtrinsic;
-    };
+// MQTT_INTERFACE_CONTRACT.md 세션 흐름을 재생: cmd/scan -> event/progress(2Hz 흉내)
+// -> state=EXPORT + state/scan -> state=IDLE.
+void DemoBridge::runScanScript() {
+    if (m_daemonState != "SCANNING") {
+        return;   // 중간에 DISARM/STOP 등으로 흐름이 끊겼으면 여기서 멈춘다.
+    }
+
+    struct Item { int delayMs; QString msg; int percent; quint32 points; };
     static const QVector<Item> steps = {
-        { 400, "SCAN",   QStringLiteral("scan/start 발행 — pan 0..180°, step 1.0° (연속 raster sweep)"),
-          "SCANNING", 5,   0,     18432, 0, 0.0,  0.0,  0.0, false },
-        { 900, "SCAN",   QStringLiteral("STM32 CMD_SCAN_START ack — 연속 pan sweep 진행 중 (~100°/s)"),
-          "SCANNING", 35,  6400,  18432, 0, 0.0,  0.0,  0.0, false },
-        { 700, "SCAN",   QStringLiteral("scan/status — 18,432 points, organized grid 수집 완료"),
-          "SCANNING", 70,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
-        { 600, "EXPORT", QStringLiteral("scan/done — PointCloudPackage 인계 (organized_cloud.pcd, QA PASS)"),
-          "EXPORT",   85,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
-        { 700, "MATCH",  QStringLiteral("Canonical scene 빌드 — camera edge DT + LiDAR depth-edge/LSD 라인"),
-          "EXPORT",   90,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
-        { 700, "MATCH",  QStringLiteral("Bounded coarse search 128 candidates → fine seed 8개 선정"),
-          "EXPORT",   93,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
-        { 800, "CHECK",  QStringLiteral("SE(3) fine optimize — edge_rmse 4.82px (기준 3px 초과) — auto-retry (1/2)"),
-          "SCANNING", 40,  18432, 18432, 1, 4.82, 0.58, 0.61, false },
-        { 900, "SCAN",   QStringLiteral("재시도 — 근거리 구조물 포함 장면으로 재촬영"),
-          "SCANNING", 70,  18432, 18432, 1, 4.82, 0.58, 0.61, false },
-        { 900, "CHECK",  QStringLiteral("multi-scene joint refine — edge_rmse 2.31px, inlier 81% — PASS"),
-          "PASS",     100, 18432, 18432, 1, 2.31, 0.81, 0.79, true  },
-        { 400, "EXPORT", QStringLiteral("extrinsic_candidate.yaml 기록 — Commit → active calibration 승격"),
-          "PASS",     100, 18432, 18432, 1, 2.31, 0.81, 0.79, true  },
+        { 400, QStringLiteral("cmd/scan 수신 — 연속 pan sweep 시작"), 5,  900  },
+        { 700, QStringLiteral("STM32 CMD_SCAN_START ack — 진행 중"), 30, 5400 },
+        { 700, QStringLiteral("스캔 진행 중"),                        65, 11700},
+        { 700, QStringLiteral("스캔 진행 중"),                        90, 16200},
+        { 500, QStringLiteral("스캔 완료 — 포인트클라우드 마감"),      100,18000},
     };
 
-    if (m_calibStep >= steps.size()) return;
-    const Item s = steps[m_calibStep];
+    if (m_scanStep >= steps.size()) {
+        publishDaemonState("EXPORT");
+
+        ScanResult r;
+        r.reqId     = m_reqId;
+        r.ok        = true;
+        r.sessionId = QStringLiteral("calib-%1").arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss"));
+        r.scanId    = QStringLiteral("sweep-000001");
+        r.pcdPath   = QStringLiteral("./scans/%1_%2.pcd").arg(r.sessionId, r.scanId);
+        r.jsonPath  = QStringLiteral("./scans/%1_%2_pan_tilt_lidar.json").arg(r.sessionId, r.scanId);
+        r.rows = 180; r.columns = 100;
+        r.points = 18000; r.expected = 18000;
+        r.durationS = 4.2;
+        r.ts = QDateTime::currentDateTime();
+        emit scanResultUpdated(r);
+        emit logLine("EXPORT", QString("state/scan 발행 — %1 (%2점)").arg(r.pcdPath).arg(r.points));
+
+        m_scanning = false;
+        QTimer::singleShot(400, this, [this] {
+            if (m_daemonState == "EXPORT") publishDaemonState("IDLE");
+        });
+        return;
+    }
+
+    const Item s = steps[m_scanStep];
     QTimer::singleShot(s.delayMs, this, [this, s] {
-        emit logLine(s.tag, s.msg);
-        CalibState c;
-        c.status = s.status; c.progress = s.progress;
-        c.scanPoints = s.points; c.expectedPoints = s.expected;
-        c.retry = s.retry; c.maxRetry = 2;
-        c.edgeRmsePx = s.edgeRmse; c.inlierRatio = s.inlier; c.ncc = s.ncc;
-        if (s.status != "PASS" && !s.haveExtrinsic)
-            c.failureReasons = s.retry > 0 ? QStringList{"LOW_EDGE_COUNT"} : QStringList{};
-        if (s.haveExtrinsic) {
-            // 카메라 바로 아래 천장 스택 배치 → 시차(translation) 거의 0, 회전은 미세 tilt.
-            c.translationM[0] = 0.012; c.translationM[1] = -0.018; c.translationM[2] = 0.152;
-            c.quaternionXyzw[0] = 0.011; c.quaternionXyzw[1] = 0.019;
-            c.quaternionXyzw[2] = -0.004; c.quaternionXyzw[3] = 0.9997;
-        }
-        c.stamp = QDateTime::currentDateTime();
-        emit calibUpdated(c);
-        ++m_calibStep;
-        runCalibScript();
+        if (m_daemonState != "SCANNING") return;
+        emit logLine("SCAN", s.msg);
+        ScanProgress p;
+        p.reqId    = m_reqId;
+        p.points   = s.points;
+        p.expected = 18000;
+        p.percent  = s.percent;
+        p.ts = QDateTime::currentDateTime();
+        emit scanProgressUpdated(p);
+        ++m_scanStep;
+        runScanScript();
     });
 }
 
@@ -119,8 +138,11 @@ void DemoBridge::tickImu() {
     m_imuPhase += 0.2;
     const bool faultWindow = std::fmod(m_imuPhase, 40.0) > 34.0;
     ImuState imu;
+    imu.valid = true;
     imu.roll  = std::sin(m_imuPhase) * 0.6         + (faultWindow ?  2.7 : 0.0);
     imu.pitch = std::cos(m_imuPhase * 0.6) * 0.4    + (faultWindow ? -1.4 : 0.0);
+    m_lastRoll = imu.roll;
+    m_lastPitch = imu.pitch;
     emit imuUpdated(imu);
 }
 
@@ -136,13 +158,52 @@ void DemoBridge::tickObjects() {
     emit objectsUpdated(objs);
 }
 
-void DemoBridge::setKitPower(bool on) {
-    m_powered = on;
-    emit logLine("POWER", on ? QStringLiteral("킷 전원 ON (데모)") : QStringLiteral("킷 전원 OFF (데모)"));
+void DemoBridge::requestScan(int panStartDdeg, int panEndDdeg,
+                              int tiltStartDdeg, int tiltEndDdeg,
+                              int stepDdeg, int sensorHeightMm) {
+    Q_UNUSED(sensorHeightMm)
+    if (m_scanning) {
+        emit logLine("SCAN", QStringLiteral("이미 스캔 중 — cmd/scan 무시 (데모)"));
+        return;
+    }
+    m_scanning = true;
+    m_scanStep = 0;
+    newReqId();
+    publishDaemonState("SCANNING");
+    emit logLine("SCAN", QString("cmd/scan 발행 (req_id=%1) pan[%2..%3] tilt[%4..%5] step=%6 (데모)")
+                              .arg(m_reqId).arg(panStartDdeg).arg(panEndDdeg)
+                              .arg(tiltStartDdeg).arg(tiltEndDdeg).arg(stepDdeg));
+    runScanScript();
 }
 
-void DemoBridge::requestRescan() {
-    emit logLine("SCAN", QStringLiteral("재스캔 명령 (데모)"));
-    m_calibStep = 0;
-    runCalibScript();
+void DemoBridge::requestStop() {
+    if (!m_scanning) return;
+    emit logLine("SCAN", QStringLiteral("cmd/stop 발행 (데모) — 조기 종료"));
+    m_scanStep = 5;   // 다음 runScanScript() 호출에서 바로 EXPORT 로
+    runScanScript();
+}
+
+void DemoBridge::requestHome() {
+    emit logLine("SCAN", QStringLiteral("cmd/home 발행 (데모) — 홈 완료 (코어 미지원, 로그만)"));
+}
+
+void DemoBridge::requestDisarm() {
+    m_scanning = false;
+    publishDaemonState("DISARM");
+
+    KitError e;
+    e.reqId = m_reqId;
+    e.code  = 0;
+    e.name  = QStringLiteral("USER_DISARM");
+    e.msg   = QStringLiteral("사용자 비상정지 (데모)");
+    e.fatal = true;
+    e.ts = QDateTime::currentDateTime();
+    emit kitErrorReceived(e);
+    emit logLine("POWER", QStringLiteral("cmd/disarm 발행 (데모) — 안전정지"));
+}
+
+void DemoBridge::requestRearm() {
+    if (m_daemonState != "DISARM") return;
+    publishDaemonState("IDLE");
+    emit logLine("POWER", QStringLiteral("REARM (데모) — DISARM 해제, IDLE 복귀"));
 }

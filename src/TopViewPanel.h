@@ -15,11 +15,13 @@ public:
     void setEdges(const QVector<MapEdge> &edges);
     void setObjects(const QVector<SpatialObject> &objects);
     void setImu(const ImuState &imu);
-    void setCalib(const CalibState &c);
+    void setDaemonState(const DaemonState &s);
+    void setScanProgress(const ScanProgress &p);
+    void setScanResult(const ScanResult &r);
 
 private:
     TopViewWidget *m_map;
     QLabel *m_coverage;
-    QLabel *m_calibSummary;
-    QLabel *m_roll, *m_pitch, *m_scanPts, *m_retry;
+    QLabel *m_scanSummary;
+    QLabel *m_roll, *m_pitch, *m_scanPts, *m_expected;
 };

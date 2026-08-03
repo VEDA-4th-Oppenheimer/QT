@@ -56,35 +56,41 @@ TopBar::TopBar(QWidget *parent) : QFrame(parent) {
 
     auto *title = new QLabel(QString::fromUtf8("SPATIAL·VMS"), this);
     title->setStyleSheet(Theme::mono(14, 700) + "letter-spacing:2px;color:#e4e9ee;");
-    auto *sub = new QLabel("v0.4 / INDOOR 3D MAPPING KIT", this);
+    auto *sub = new QLabel("v1.0 / ADTS SCANNER KIT", this);
     sub->setStyleSheet(Theme::mono(10) + "letter-spacing:2px;color:#5f6c78;");
 
     l->addWidget(title);
     l->addWidget(sub);
     l->addWidget(chip(this, "MQTT",  &m_mqtt, &m_mqttDot));
     l->addWidget(chip(this, "IMU",   &m_imu));
-    l->addWidget(chip(this, "CALIB", &m_calib));
+    l->addWidget(chip(this, "STATE", &m_state));
     l->addStretch(1);
 
     m_clock = new QLabel(this);
     m_clock->setObjectName("mono");
     l->addWidget(m_clock);
 
-    auto *calibrate = new QPushButton("CALIBRATE", this);
-    calibrate->setObjectName("accent");
-    auto *rescan = new QPushButton("RE-SCAN", this);
-    m_power = new QPushButton(this);
+    m_home   = new QPushButton("HOME", this);
+    m_scan   = new QPushButton("SCAN", this);
+    m_scan->setObjectName("accent");
+    m_stop   = new QPushButton("STOP", this);
+    m_disarm = new QPushButton("DISARM", this);
+    m_disarm->setObjectName("powerOff");   // 항상 빨강 계열 — 비상정지
 
-    connect(calibrate, &QPushButton::clicked, this, &TopBar::calibrateRequested);
-    connect(rescan,    &QPushButton::clicked, this, &TopBar::rescanRequested);
-    connect(m_power,   &QPushButton::clicked, this, [this] {
-        setPower(!m_powerOn);
-        emit powerToggled(m_powerOn);
+    connect(m_home,   &QPushButton::clicked, this, [this] {
+        // DISARM 상태에선 이 버튼이 REARM 으로 바뀐다(계약 §5 "복구"). 계약에 별도
+        // rearm 토픽은 없어 데몬 지원 전까지는 로컬 상태만 IDLE 로 되돌린다(TODO).
+        if (m_lastState == "DISARM") emit rearmRequested();
+        else                          emit homeRequested();
     });
+    connect(m_scan,   &QPushButton::clicked, this, &TopBar::scanRequested);
+    connect(m_stop,   &QPushButton::clicked, this, &TopBar::stopRequested);
+    connect(m_disarm, &QPushButton::clicked, this, &TopBar::disarmRequested);
 
-    l->addWidget(calibrate);
-    l->addWidget(rescan);
-    l->addWidget(m_power);
+    l->addWidget(m_home);
+    l->addWidget(m_scan);
+    l->addWidget(m_stop);
+    l->addWidget(m_disarm);
 
     auto *t = new QTimer(this);
     connect(t, &QTimer::timeout, this, [this] {
@@ -95,31 +101,49 @@ TopBar::TopBar(QWidget *parent) : QFrame(parent) {
 
     setBrokerConnected(false);
     setImu({});
-    setCalib({});
-    setPower(true);
+    setDaemonState({});
 }
 
 void TopBar::setBrokerConnected(bool up) {
-    m_mqtt->setText(up ? "CONNECTED  192.168.0.42:1883" : "DISCONNECTED");
+    m_mqtt->setText(up ? "CONNECTED" : "DISCONNECTED");
     m_mqtt->setStyleSheet(Theme::mono(10, 500) +
         QString("color:%1;").arg(up ? Theme::Ok.name() : Theme::DangerText.name()));
     m_mqttDot->setStyleSheet(QString("color:%1;font-size:7px;").arg(up ? Theme::Ok.name() : Theme::Danger.name()));
 }
 
 void TopBar::setImu(const ImuState &imu) {
+    // 계약 §3.3: level.valid=false 면 IMU 미구현 — 값을 표시하지 않는다.
+    if (!imu.valid) {
+        m_imu->setText("N/A");
+        m_imu->setStyleSheet(Theme::mono(10, 500) + QString("color:%1;").arg(Theme::TextFaint.name()));
+        return;
+    }
     m_imu->setText(QString("R %1° / P %2°").arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1));
     m_imu->setStyleSheet(Theme::mono(10, 500) +
         QString("color:%1;").arg(imu.level() ? Theme::Ok.name() : Theme::DangerText.name()));
 }
 
-void TopBar::setCalib(const CalibState &c) {
-    m_calib->setText(QString("%1%  retry %2/%3").arg(c.progress).arg(c.retry).arg(c.maxRetry));
-}
+void TopBar::setDaemonState(const DaemonState &s) {
+    m_state->setText(s.state);
+    const QString color =
+        (s.state == "IDLE")     ? Theme::Ok.name() :
+        (s.state == "SCANNING") ? Theme::AccentBright.name() :
+        (s.state == "EXPORT")   ? Theme::Warn.name() :
+        (s.state == "DISARM")   ? Theme::DangerText.name() :
+                                   Theme::TextFaint.name();   // OFFLINE
+    m_state->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;letter-spacing:1px;").arg(color));
+    m_lastState = s.state;
 
-void TopBar::setPower(bool on) {
-    m_powerOn = on;
-    m_power->setText(on ? "POWER ON" : "POWER OFF");
-    m_power->setObjectName(on ? "powerOn" : "powerOff");
-    m_power->style()->unpolish(m_power);
-    m_power->style()->polish(m_power);
+    // 계약 §5 상태-버튼 매핑. DISARM 버튼만 예외적으로 항상 활성(비상정지).
+    // DISARM 상태에선 HOME 버튼이 "복구(REARM)" 로 바뀌어 유일하게 활성화된다 —
+    // 안 그러면 DISARM 이후 아무 버튼도 못 눌러 되돌아올 방법이 없다.
+    if (s.state == "DISARM") {
+        m_home->setText("REARM");
+        m_home->setEnabled(true);
+    } else {
+        m_home->setText("HOME");
+        m_home->setEnabled(s.state == "IDLE");
+    }
+    m_scan->setEnabled(s.state == "IDLE");
+    m_stop->setEnabled(s.state == "SCANNING");
 }

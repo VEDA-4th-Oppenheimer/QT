@@ -21,15 +21,19 @@
 #include <QMenu>
 #include <QAction>
 #include <QDateTime>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace {
 QString sourceForTag(const QString &tag) {
-    if (tag == "SCAN" || tag == "LSD" || tag == "MATCH" || tag == "CHECK" || tag == "EXPORT" || tag == "CALIB")
+    if (tag == "SCAN" || tag == "EXPORT")
         return "RPi4B";
-    if (tag == "MQTT")  return "BROKER";
-    if (tag == "POWER") return "KIT";
+    if (tag == "MQTT")   return "BROKER";
+    if (tag == "POWER")  return "KIT";
+    if (tag == "ERROR")  return "KIT";
     if (tag == "TILT" || tag == "LEVEL") return "IMU";
-    if (tag == "RTSP")  return "CAMERA";
+    if (tag == "RTSP")   return "CAMERA";
     return "KIT";
 }
 }
@@ -83,11 +87,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             m_devicesTab->setImu(imu);
             m_banner->update(imu);
         });
-        connect(src, &DataBridge::calibUpdated, this, [this](const CalibState &c) {
-            m_topBar->setCalib(c);
-            m_topView->setCalib(c);
-            m_calibTab->setCalib(c);
-            m_devicesTab->setCalib(c);
+        connect(src, &DataBridge::daemonStateUpdated, this, [this](const DaemonState &s) {
+            m_topBar->setDaemonState(s);
+            m_topView->setDaemonState(s);
+            m_calibTab->setDaemonState(s);
+            m_statusBar->setDaemonState(s);
+        });
+        connect(src, &DataBridge::scanProgressUpdated, this, [this](const ScanProgress &p) {
+            m_topView->setScanProgress(p);
+            m_calibTab->setScanProgress(p);
+            m_devicesTab->setScanProgress(p);
+        });
+        connect(src, &DataBridge::scanResultUpdated, this, [this](const ScanResult &r) {
+            m_topView->setScanResult(r);
+            m_calibTab->setScanResult(r);
+            appendLog("EXPORT", QString("state/scan — %1 (%2점, %3s)")
+                                     .arg(r.pcdPath).arg(r.points).arg(r.durationS, 0, 'f', 1));
+        });
+        connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
+            appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));
         });
         connect(src, &DataBridge::objectsUpdated, m_topView, &TopViewPanel::setObjects);
         connect(src, &DataBridge::mapEdgesUpdated, m_topView, &TopViewPanel::setEdges);
@@ -121,22 +139,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                               .arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1));
     });
 
-    connect(m_topBar, &TopBar::powerToggled, this, [this](bool on) {
-        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->setKitPower(on);
-        m_statusBar->setPower(on);
-    });
-    connect(m_topBar, &TopBar::rescanRequested, this, [this] {
-        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestRescan();
-    });
-    connect(m_topBar, &TopBar::calibrateRequested, this, [this, tabs] {
-        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestRescan();
+    // 계약 §3.1 UI 기본값 권장: pan [0,1790] / tilt [-900,900] / step 10.
+    connect(m_topBar, &TopBar::scanRequested, this, [this, tabs] {
+        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))
+            ->requestScan(0, 1790, -900, 900, 10, 0);
         tabs->setCurrentIndex(1);
     });
-
-    connect(m_calibTab, &CalibrationTab::exportRequested, this, [this](const QString &fmt) {
-        appendLog("EXPORT", QString("calib_ch1_%1.%2 written")
-                                 .arg(QDateTime::currentDateTime().toString("yyyyMMdd")).arg(fmt));
+    connect(m_topBar, &TopBar::stopRequested, this, [this] {
+        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestStop();
     });
+    connect(m_topBar, &TopBar::homeRequested, this, [this] {
+        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestHome();
+    });
+    connect(m_topBar, &TopBar::disarmRequested, this, [this] {
+        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestDisarm();
+    });
+    connect(m_topBar, &TopBar::rearmRequested, this, [this] {
+        (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestRearm();
+    });
+
     connect(m_datasetTab, &DatasetTab::exportRequested, this, [this] {
         appendLog("EXPORT", QString::fromUtf8("RGB-D 데이터셋 내보내기 완료"));
     });
@@ -178,10 +199,23 @@ void MainWindow::setDemoMode(bool demo) {
     if (demo) {
         m_mqtt->stop();
         m_demo->start();
-    } else {
-        m_demo->stop();
-        m_mqtt->connectToBroker("192.168.0.42", 1883);
+        return;
     }
+    m_demo->stop();
+
+    // config/mqtt.json (계약서 §1/§6): {"host","port","cert_dir"}. 없으면
+    // 브로커가 아직 없는 로컬 개발 기준 localhost:1883 평문으로 시도한다.
+    QString host = "localhost";
+    quint16 port = 1883;
+    QString certDir;
+    QFile f("config/mqtt.json");
+    if (f.open(QIODevice::ReadOnly)) {
+        const auto o = QJsonDocument::fromJson(f.readAll()).object();
+        host    = o.value("host").toString(host);
+        port    = static_cast<quint16>(o.value("port").toInt(port));
+        certDir = o.value("cert_dir").toString();
+    }
+    m_mqtt->connectToBroker(host, port, certDir);
 }
 
 void MainWindow::appendLog(const QString &tag, const QString &msg) {
