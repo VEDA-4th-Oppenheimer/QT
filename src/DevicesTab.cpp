@@ -105,7 +105,7 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
         if (s == "TX")   return Theme::AccentBright;
         return Theme::Ok;
     };
-    for (int r = 0; r < 7; ++r) {
+    for (int r = 0; r < 8; ++r) {
         m_table->setItem(r, 0, new QTableWidgetItem(QString::fromUtf8(rows[r].topic)));
         m_table->setItem(r, 1, new QTableWidgetItem(QString::fromUtf8(rows[r].rate)));
         m_table->setItem(r, 2, new QTableWidgetItem(QString::fromUtf8(rows[r].desc)));
