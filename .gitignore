@@ -1,0 +1,6 @@
+build/
+paho.mqtt.cpp/
+.idea/
+.claude/
+.DS_Store
+datasets/
