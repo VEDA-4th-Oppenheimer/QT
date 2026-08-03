@@ -33,11 +33,13 @@ void DemoBridge::stop() {
 }
 
 void DemoBridge::emitChannelDefaults() {
+    // 실제 영상은 RTSP 직결(RtspSource)이라 MQTT 와 무관하다 — 이건 RTSP 미설정 시의
+    // 데모용 채널 상태 시뮬레이션일 뿐이다.
     emit channelStatusChanged(1, true, 24.9);
     emit channelStatusChanged(2, true, 25.0);
     emit channelStatusChanged(3, true, 25.0);
     emit channelStatusChanged(4, false, 0.0);
-    emit logLine("MQTT", QStringLiteral("cctv/ch4/h264 구독 응답 없음 — DISCONNECTED (데모)"));
+    emit logLine("RTSP", QStringLiteral("CH4 응답 없음 (데모 시뮬레이션)"));
 }
 
 void DemoBridge::emitEdges() {
@@ -54,30 +56,39 @@ void DemoBridge::emitEdges() {
     emit mapEdgesUpdated(edges);
 }
 
+// "01. Point Cloud 생성 및 인계 계획" + "02. Point Cloud 이후 Camera Automatic
+// Calibration 상세 계획" 문서의 실제 세션 흐름을 재생한다: STM32 스캔(scan/status·
+// scan/done) -> 카메라 단 캘리브(현재 토픽 미정, calib/result 로 가정) -> quality
+// gate PASS. edge_rmse_px/inlier_ratio 가 메인 지표이고 NCC 는 진단용 참고값이다
+// (문서 §11.3) — 낮은 edge_rmse 로 한 번 실패시켜 auto-retry(최대 2회)를 보여준다.
 void DemoBridge::runCalibScript() {
     struct Item {
-        int delayMs; QString tag; QString msg;
-        int progress; double ncc, reproj; int retry, points, inliers, candidates; double coverage;
+        int delayMs; QString tag; QString msg; QString status;
+        int progress; quint32 points, expected; int retry;
+        double edgeRmse, inlier, ncc;
+        bool haveExtrinsic;
     };
     static const QVector<Item> steps = {
-        { 400, "SCAN",  QStringLiteral("360° grid scan started — θ 0..360°, φ −78°..+8° (ceiling mount)"),
-          5,   0.0,   0.0,  0, 0,     0,  0,  0.0  },
-        { 900, "SCAN",  QStringLiteral("18,432 points captured, 1,204 depth-edge candidates (실내 10.0 × 10.0 m)"),
-          20,  0.0,   0.0,  0, 18432, 0,  0,  0.10 },
-        { 600, "LSD",   QStringLiteral("19 structural lines after NFA filtering (V:11 / H:8)"),
-          35,  0.0,   0.0,  0, 18432, 0,  19, 0.25 },
-        { 600, "MATCH", QStringLiteral("19 candidate line pairs → RANSAC inliers 12"),
-          50,  0.0,   0.0,  0, 18432, 12, 19, 0.55 },
-        { 600, "CHECK", QStringLiteral("NCC 0.684 < 0.720 — auto-retry triggered (1/3)"),
-          55,  0.684, 0.0,  1, 18432, 12, 19, 0.55 },
-        { 700, "SCAN",  QStringLiteral("Re-scan started with φ offset +6°"),
-          65,  0.684, 0.0,  1, 18432, 12, 19, 0.6  },
-        { 900, "MATCH", QStringLiteral("RANSAC inliers 14 / 19, reprojection 2.14 px"),
-          85,  0.684, 2.14, 1, 18432, 14, 19, 0.75 },
-        { 500, "CHECK", QStringLiteral("NCC 0.813 ≥ 0.720 — PASS"),
-          100, 0.813, 2.14, 1, 18432, 14, 19, 0.92 },
-        { 400, "EXPORT",QStringLiteral("calib_ch1_20260803.json written (RT, H, report)"),
-          100, 0.813, 2.14, 1, 18432, 14, 19, 0.92 },
+        { 400, "SCAN",   QStringLiteral("scan/start 발행 — pan 0..180°, step 1.0° (연속 raster sweep)"),
+          "SCANNING", 5,   0,     18432, 0, 0.0,  0.0,  0.0, false },
+        { 900, "SCAN",   QStringLiteral("STM32 CMD_SCAN_START ack — 연속 pan sweep 진행 중 (~100°/s)"),
+          "SCANNING", 35,  6400,  18432, 0, 0.0,  0.0,  0.0, false },
+        { 700, "SCAN",   QStringLiteral("scan/status — 18,432 points, organized grid 수집 완료"),
+          "SCANNING", 70,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
+        { 600, "EXPORT", QStringLiteral("scan/done — PointCloudPackage 인계 (organized_cloud.pcd, QA PASS)"),
+          "EXPORT",   85,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
+        { 700, "MATCH",  QStringLiteral("Canonical scene 빌드 — camera edge DT + LiDAR depth-edge/LSD 라인"),
+          "EXPORT",   90,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
+        { 700, "MATCH",  QStringLiteral("Bounded coarse search 128 candidates → fine seed 8개 선정"),
+          "EXPORT",   93,  18432, 18432, 0, 0.0,  0.0,  0.0, false },
+        { 800, "CHECK",  QStringLiteral("SE(3) fine optimize — edge_rmse 4.82px (기준 3px 초과) — auto-retry (1/2)"),
+          "SCANNING", 40,  18432, 18432, 1, 4.82, 0.58, 0.61, false },
+        { 900, "SCAN",   QStringLiteral("재시도 — 근거리 구조물 포함 장면으로 재촬영"),
+          "SCANNING", 70,  18432, 18432, 1, 4.82, 0.58, 0.61, false },
+        { 900, "CHECK",  QStringLiteral("multi-scene joint refine — edge_rmse 2.31px, inlier 81% — PASS"),
+          "PASS",     100, 18432, 18432, 1, 2.31, 0.81, 0.79, true  },
+        { 400, "EXPORT", QStringLiteral("extrinsic_candidate.yaml 기록 — Commit → active calibration 승격"),
+          "PASS",     100, 18432, 18432, 1, 2.31, 0.81, 0.79, true  },
     };
 
     if (m_calibStep >= steps.size()) return;
@@ -85,10 +96,18 @@ void DemoBridge::runCalibScript() {
     QTimer::singleShot(s.delayMs, this, [this, s] {
         emit logLine(s.tag, s.msg);
         CalibState c;
-        c.progress = s.progress; c.ncc = s.ncc; c.reprojPx = s.reproj;
-        c.retry = s.retry; c.maxRetry = 3; c.scanPoints = s.points;
-        c.inliers = s.inliers; c.candidateLines = s.candidates;
-        c.coverage = s.coverage;
+        c.status = s.status; c.progress = s.progress;
+        c.scanPoints = s.points; c.expectedPoints = s.expected;
+        c.retry = s.retry; c.maxRetry = 2;
+        c.edgeRmsePx = s.edgeRmse; c.inlierRatio = s.inlier; c.ncc = s.ncc;
+        if (s.status != "PASS" && !s.haveExtrinsic)
+            c.failureReasons = s.retry > 0 ? QStringList{"LOW_EDGE_COUNT"} : QStringList{};
+        if (s.haveExtrinsic) {
+            // 카메라 바로 아래 천장 스택 배치 → 시차(translation) 거의 0, 회전은 미세 tilt.
+            c.translationM[0] = 0.012; c.translationM[1] = -0.018; c.translationM[2] = 0.152;
+            c.quaternionXyzw[0] = 0.011; c.quaternionXyzw[1] = 0.019;
+            c.quaternionXyzw[2] = -0.004; c.quaternionXyzw[3] = 0.9997;
+        }
         c.stamp = QDateTime::currentDateTime();
         emit calibUpdated(c);
         ++m_calibStep;

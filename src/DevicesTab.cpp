@@ -11,8 +11,8 @@
 namespace {
 struct StaticDevice { const char *name, *desc, *value; };
 const StaticDevice kStatic[2] = {
-    {"STM32 + DRV8825", "Pan/Tilt 2축 · 카메라와 동일 천장 마운트", "IDLE · θ 0..360° / 0.45°step"},
-    {"RPi 4B",           "Serial parser / MQTT bridge",             "RUN · 42.3 °C"},
+    {"STM32 + DRV8825", "Pan/Tilt 2축 · 카메라와 동일 천장 스택 마운트", "IDLE · pan 0..180° / 1.0°step"},
+    {"RPi 4B",           "통합 데몬(C, epoll) + Mosquitto 브로커",       "RUN · 42.3 °C"},
 };
 
 QFrame *deviceCard(QWidget *parent, const QString &name, const QString &desc,
@@ -53,9 +53,9 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     auto *cards = new QGridLayout;
     cards->setSpacing(10);
 
-    cards->addWidget(deviceCard(this, "MPU6050", QString::fromUtf8("킷 수평 감지 (I²C, 100 Hz)"),
+    cards->addWidget(deviceCard(this, "MPU6050", QString::fromUtf8("수평 게이트 판정 (/dev/imu, I²C)"),
                                  &m_mpuDot, &m_mpuValue), 0, 0);
-    cards->addWidget(deviceCard(this, "TOFSense-F2P", QString::fromUtf8("1D LiDAR · 실내 최대 25 m"),
+    cards->addWidget(deviceCard(this, "TOFSense-F2D", QString::fromUtf8("1D LiDAR · pan-tilt 격자 스캔 (100 Hz)"),
                                  &m_tofDot, &m_tofValue), 0, 1);
     QLabel *dummyDot; QLabel *dummyValue;
     for (int i = 0; i < 2; ++i) {
@@ -75,20 +75,21 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     tableHead->addWidget(qos);
     root->addLayout(tableHead);
 
+    // 영상은 MQTT가 아니라 RTSP 직결(RtspSource, 대시보드 타일 참고). 아래는 실제
+    // STM32<->RPi<->Qt MQTT 계약 — scan/* 4개는 확정, 나머지는 팀 협의 중인 토픽명이다
+    // ("Device 파트 아키텍처 및 역할 분담 V2" §7 미결: "MQTT 토픽 스키마 확정").
     struct Row { const char *topic, *rate, *desc, *state; };
-    const Row rows[9] = {
-        {"cctv/ch1/h264",    "24.9 fps",  "CH1 영상 스트림 (H.264 payload)", "RX"},
-        {"cctv/ch2/h264",    "25.0 fps",  "CH2 영상 스트림",                  "RX"},
-        {"cctv/ch3/h264",    "25.0 fps",  "CH3 영상 스트림",                  "RX"},
-        {"cctv/ch4/h264",    "—",         "CH4 영상 스트림 — 브로커 응답 없음", "LOST"},
-        {"wiseai/+/objects", "10 Hz",     "WiseAI 감지 BBox + class",         "RX"},
-        {"kit/lidar/scan",   "burst",     "360° grid scan point cloud",       "RX"},
-        {"kit/imu/level",    "20 Hz",     "MPU6050 roll / pitch",             "RX"},
-        {"kit/cmd/power",    "on-demand", "킷 전원 제어 (Qt -> STM32)",       "TX"},
-        {"kit/cmd/rescan",   "on-demand", "자동 재시도 재스캔 명령",          "TX"},
+    const Row rows[7] = {
+        {"scan/start",    "on-demand", "Qt -> RPi: 스캔 시작 (CMD_SCAN_START 트리거)",  "TX"},
+        {"scan/stop",     "on-demand", "Qt -> RPi: 스캔 중단",                          "TX"},
+        {"scan/status",   "~1 Hz",     "RPi -> Qt: 진행률 (percent/points/expected)",   "RX"},
+        {"scan/done",     "on-demand", "RPi -> Qt: 포인트클라우드 파일 경로",           "RX"},
+        {"calib/result",  "on-demand", "카메라 단 -> Qt: 캘리브 품질/extrinsic",        "TODO"},
+        {"calib/objects", "~10 Hz",    "카메라 단 -> Qt: WiseAI bbox 실좌표",           "TODO"},
+        {"imu/level",     "?",         "RPi -> Qt: 수평 게이트 상태 (상시 여부 미결)",  "TODO"},
     };
 
-    m_table = new QTableWidget(9, 4, this);
+    m_table = new QTableWidget(7, 4, this);
     m_table->setHorizontalHeaderLabels({"TOPIC", "RATE", "DESC", "STATE"});
     m_table->verticalHeader()->hide();
     m_table->horizontalHeader()->setStretchLastSection(true);
@@ -100,17 +101,17 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
 
     auto stateColor = [](const QString &s) {
         if (s == "LOST") return Theme::DangerText;
-        if (s == "TX") return Theme::Warn;
+        if (s == "TODO") return Theme::Warn;
+        if (s == "TX")   return Theme::AccentBright;
         return Theme::Ok;
     };
-    for (int r = 0; r < 9; ++r) {
+    for (int r = 0; r < 7; ++r) {
         m_table->setItem(r, 0, new QTableWidgetItem(QString::fromUtf8(rows[r].topic)));
         m_table->setItem(r, 1, new QTableWidgetItem(QString::fromUtf8(rows[r].rate)));
         m_table->setItem(r, 2, new QTableWidgetItem(QString::fromUtf8(rows[r].desc)));
         auto *stateItem = new QTableWidgetItem(QString::fromUtf8(rows[r].state));
         stateItem->setForeground(stateColor(rows[r].state));
         m_table->setItem(r, 3, stateItem);
-        if (QString::fromUtf8(rows[r].topic) == "cctv/ch4/h264") m_ch4Row = r;
     }
     root->addWidget(m_table, 1);
 
@@ -128,15 +129,12 @@ void DevicesTab::setImu(const ImuState &imu) {
 }
 
 void DevicesTab::setCalib(const CalibState &c) {
-    m_tofValue->setText(QString("READY · %1 pts / %2% coverage")
-                             .arg(c.scanPoints).arg(int(c.coverage * 100)));
+    const int pct = c.expectedPoints > 0 ? int(qint64(c.scanPoints) * 100 / c.expectedPoints) : 0;
+    m_tofValue->setText(QString("READY · %1 / %2 pts (%3%)")
+                             .arg(c.scanPoints).arg(c.expectedPoints).arg(pct));
 }
 
-void DevicesTab::setChannelOnline(int channel, bool online) {
-    if (channel != 4 || m_ch4Row < 0) return;
-    auto *item = m_table->item(m_ch4Row, 3);
-    if (!item) return;
-    item->setText(online ? "RX" : "LOST");
-    item->setForeground(online ? Theme::Ok : Theme::DangerText);
-    m_table->item(m_ch4Row, 1)->setText(online ? "25.0 fps" : QString::fromUtf8("—"));
+void DevicesTab::setChannelOnline(int /*channel*/, bool /*online*/) {
+    // 영상은 RTSP 직결이라 이 MQTT 토픽 테이블과는 무관하다. 채널 상태는
+    // 대시보드 탭의 CameraTile 에 이미 표시되므로 여기서는 별도 처리하지 않는다.
 }

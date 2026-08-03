@@ -4,3 +4,6 @@ paho.mqtt.cpp/
 .claude/
 .DS_Store
 datasets/
+
+# 실제 카메라 IP/RTSP 인증정보 — 커밋 금지. config/cameras.example.json 참고.
+config/cameras.json

@@ -2,7 +2,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QRegularExpression>
 #include <QDateTime>
 #include <QUuid>
 #include <QDebug>
@@ -12,21 +11,9 @@
 namespace {
 constexpr int kQos = 1;
 constexpr int kKeepAliveSec = 30;
-constexpr int kChannelTimeoutMs = 3000;
 }
 
-MqttBridge::MqttBridge(QObject *parent) : DataBridge(parent) {
-    for (int i = 0; i < 4; ++i) {
-        m_timeout[i] = new QTimer(this);
-        m_timeout[i]->setSingleShot(true);
-        m_timeout[i]->setInterval(kChannelTimeoutMs);
-        const int ch = i + 1;
-        connect(m_timeout[i], &QTimer::timeout, this, [this, ch] {
-            emit channelStatusChanged(ch, false, 0.0);
-            emit logLine("MQTT", QString("cctv/ch%1/h264 구독 끊김 — keepalive timeout").arg(ch));
-        });
-    }
-}
+MqttBridge::MqttBridge(QObject *parent) : DataBridge(parent) {}
 
 MqttBridge::~MqttBridge() { disconnectFromBroker(); }
 
@@ -68,13 +55,19 @@ void MqttBridge::disconnectFromBroker() {
 }
 
 void MqttBridge::setKitPower(bool on) {
-    publish("kit/cmd/power", on ? "{\"power\":1}" : "{\"power\":0}");
-    emit logLine("POWER", on ? QStringLiteral("kit power ON 명령 전송") : QStringLiteral("kit power OFF 명령 전송"));
+    // 실제 STM32/RPi 프로토콜엔 "전원 ON/OFF" 커맨드가 없다(CMD_HOME/SCAN_*/DISARM 뿐).
+    // 확정되면 이 자리에서 실제 토픽으로 publish 한다 — 지금은 로그만 남긴다.
+    emit logLine("POWER", on ? QStringLiteral("전원 ON 요청 (실제 프로토콜 미정 — 로그만 기록)")
+                              : QStringLiteral("전원 OFF 요청 (실제 프로토콜 미정 — 로그만 기록)"));
 }
 
 void MqttBridge::requestRescan() {
-    publish("kit/cmd/rescan", "{\"rescan\":1}");
-    emit logLine("SCAN", QStringLiteral("re-scan 명령 전송"));
+    // CMD_SCAN_START. Qt 에 아직 pan/tilt 범위 입력 UI가 없어 기본 풀스윕 파라미터로 발행한다.
+    const QByteArray payload = R"({"pan_start_ddeg":0,"pan_end_ddeg":1800,)"
+                                R"("tilt_start_ddeg":0,"tilt_end_ddeg":0,)"
+                                R"("step_ddeg":10,"z_offset_mm":0})";
+    publish("scan/start", payload);
+    emit logLine("SCAN", QStringLiteral("scan/start 발행 (pan 0..180°, step 1.0°)"));
 }
 
 void MqttBridge::publish(const QString &topic, const QByteArray &payload) {
@@ -89,8 +82,9 @@ void MqttBridge::publish(const QString &topic, const QByteArray &payload) {
 void MqttBridge::subscribeAll() {
     if (!m_client) return;
     static const char *topics[] = {
-        "cctv/ch1/h264", "cctv/ch2/h264", "cctv/ch3/h264", "cctv/ch4/h264",
-        "wiseai/+/objects", "kit/lidar/scan", "kit/imu/level", "kit/calib/status",
+        "scan/status", "scan/done",           // 확정 (daemon_module.h)
+        "calib/result", "calib/objects",      // TODO: 카메라 단 발행 토픽명 협의 중
+        "imu/level",                          // TODO: 실시간 IMU 브로드캐스트 여부 미정
     };
     for (auto *t : topics) {
         try {
@@ -104,7 +98,7 @@ void MqttBridge::subscribeAll() {
 void MqttBridge::connected(const std::string & /*cause*/) {
     emit brokerStateChanged(true);
     subscribeAll();
-    emit logLine("MQTT", QString("broker connected (%1:%2), 8 topics subscribed").arg(m_host).arg(m_port));
+    emit logLine("MQTT", QString("broker connected (%1:%2), 5 topics subscribed").arg(m_host).arg(m_port));
 }
 
 void MqttBridge::connection_lost(const std::string &cause) {
@@ -115,8 +109,7 @@ void MqttBridge::connection_lost(const std::string &cause) {
 void MqttBridge::delivery_complete(mqtt::delivery_token_ptr /*token*/) {}
 
 void MqttBridge::message_arrived(mqtt::const_message_ptr msg) {
-    // Paho 콜백은 자체 네트워크 스레드에서 실행된다. QTimer 등 GUI 스레드 전용 객체를
-    // 건드리는 실제 처리는 큐드 연결로 GUI 스레드에 넘긴 뒤 onRawMessage 에서 수행한다.
+    // Paho 콜백은 자체 네트워크 스레드에서 실행된다. 파싱은 GUI 스레드로 넘겨 처리한다.
     const QString topic = QString::fromStdString(msg->get_topic());
     const QByteArray payload(msg->get_payload().data(), static_cast<int>(msg->get_payload().size()));
     QMetaObject::invokeMethod(this, [this, topic, payload] {
@@ -125,33 +118,68 @@ void MqttBridge::message_arrived(mqtt::const_message_ptr msg) {
 }
 
 void MqttBridge::onRawMessage(const QString &topic, const QByteArray &payload) {
-    static const QRegularExpression chRe("^cctv/ch(\\d)/h264$");
-    const auto m = chRe.match(topic);
-    if (m.hasMatch())            { handleFrame(m.captured(1).toInt(), payload); return; }
-    if (topic == "kit/imu/level")    { handleImu(payload); return; }
-    if (topic == "kit/lidar/scan")   { handleLidarScan(payload); return; }
-    if (topic.endsWith("/objects"))  { handleObjects(payload); return; }
-    if (topic == "kit/calib/status") { handleCalib(payload); return; }
+    if (topic == "scan/status")     { handleScanStatus(payload); return; }
+    if (topic == "scan/done")       { handleScanDone(payload);   return; }
+    if (topic == "calib/result")    { handleCalibResult(payload); return; }
+    if (topic == "calib/objects")   { handleObjects(payload);    return; }
+    if (topic == "imu/level")       { handleImu(payload);        return; }
 }
 
-void MqttBridge::handleFrame(int ch, const QByteArray &payload) {
-    if (ch < 1 || ch > 4) return;
-    // TODO: payload 가 H.264 NAL 이면 여기서 FFmpeg/QtMultimedia 디코더를 통과시킨다.
-    // 지금은 publisher 가 JPEG 프레임을 그대로 싣는다고 가정한다.
-    QImage img;
-    const bool ok = img.loadFromData(payload, "JPG");
-
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    double fps = 0.0;
-    if (m_lastFrameAtMs[ch - 1] > 0) {
-        const qint64 dt = now - m_lastFrameAtMs[ch - 1];
-        if (dt > 0) fps = 1000.0 / dt;
+// scan/status: RPi 데몬이 SCANNING 중 발행 (struct scan_progress 기반 JSON 가정)
+//   {"percent":42,"points":7823,"expected":18432,"state":"SCANNING"}
+// 수평 게이트 실패 시 (아키텍처 V2 시퀀스): {"state":"tilt_ng"}
+void MqttBridge::handleScanStatus(const QByteArray &payload) {
+    const auto o = QJsonDocument::fromJson(payload).object();
+    const QString state = o.value("state").toString();
+    if (state == "tilt_ng") {
+        emit logLine("LEVEL", QStringLiteral("수평 게이트 실패 — 스캔 거부 (재설치 필요)"));
+        return;
     }
-    m_lastFrameAtMs[ch - 1] = now;
+    m_calib.status         = "SCANNING";
+    m_calib.progress       = o.value("percent").toInt();
+    m_calib.scanPoints     = o.value("points").toInt();
+    m_calib.expectedPoints = o.value("expected").toInt();
+    m_calib.stamp          = QDateTime::currentDateTime();
+    emit calibUpdated(m_calib);
+}
 
-    m_timeout[ch - 1]->start();   // 3초 이내 다음 프레임이 없으면 DISCONNECTED 처리
-    emit channelStatusChanged(ch, true, fps);
-    if (ok) emit frameReceived(ch, img);
+// scan/done: {"path":"...","point_count":18432,"stm_reported":18432}
+// 포인트클라우드 파일이 준비됐다는 뜻이지, 캘리브 결과(PASS/FAIL)는 아직 아니다.
+void MqttBridge::handleScanDone(const QByteArray &payload) {
+    const auto o = QJsonDocument::fromJson(payload).object();
+    m_calib.status     = "EXPORT";
+    m_calib.scanPoints = o.value("point_count").toInt();
+    m_calib.stamp      = QDateTime::currentDateTime();
+    emit calibUpdated(m_calib);
+    emit logLine("EXPORT", QString("포인트클라우드 완료: %1 (%2점) — 카메라 단 전달 대기")
+                                .arg(o.value("path").toString()).arg(m_calib.scanPoints));
+}
+
+// calib/result [TODO 토픽]: "02" 문서 §14.2 extrinsic/quality 스키마를 그대로 따른다고 가정.
+void MqttBridge::handleCalibResult(const QByteArray &payload) {
+    const auto root = QJsonDocument::fromJson(payload).object();
+    const auto quality = root.value("quality").toObject();
+    const auto extrinsic = root.value("extrinsic").toObject();
+    const auto translation = extrinsic.value("translation_m").toArray();
+    const auto quat = extrinsic.value("quaternion_xyzw").toArray();
+
+    m_calib.status      = quality.value("status").toString("FAIL");
+    m_calib.edgeRmsePx   = quality.value("edge_rmse_px").toDouble();
+    m_calib.inlierRatio  = quality.value("inlier_ratio").toDouble();
+    m_calib.retry        = quality.value("retry_count").toInt();
+    m_calib.failureReasons.clear();
+    for (const auto &v : quality.value("failure_reasons").toArray())
+        m_calib.failureReasons << v.toString();
+
+    for (int i = 0; i < 3 && i < translation.size(); ++i) m_calib.translationM[i] = translation[i].toDouble();
+    for (int i = 0; i < 4 && i < quat.size(); ++i) m_calib.quaternionXyzw[i] = quat[i].toDouble();
+
+    m_calib.stamp = QDateTime::currentDateTime();
+    emit calibUpdated(m_calib);
+    emit logLine("CHECK", QString("캘리브 결과 %1 — edge_rmse %2px, inlier %3%")
+                               .arg(m_calib.status)
+                               .arg(m_calib.edgeRmsePx, 0, 'f', 2)
+                               .arg(int(m_calib.inlierRatio * 100)));
 }
 
 void MqttBridge::handleImu(const QByteArray &payload) {
@@ -162,8 +190,9 @@ void MqttBridge::handleImu(const QByteArray &payload) {
     emit imuUpdated(imu);
 }
 
+// calib/objects [TODO 토픽]: WiseAI(Wisenet 네이티브 사람/차량 클래스) bbox를 카메라 단이
+// 캘리브 extrinsic으로 실좌표 변환해 발행한다고 가정 (아키텍처 V2 데이터 흐름).
 void MqttBridge::handleObjects(const QByteArray &payload) {
-    // Module 4: 2D BBox 바닥점 -> H^-1 / RT^-1 변환된 실내 좌표(x,y[m])가 이미 실려온다고 가정.
     QVector<SpatialObject> out;
     for (const auto &v : QJsonDocument::fromJson(payload).object().value("objects").toArray()) {
         const auto o = v.toObject();
@@ -175,35 +204,4 @@ void MqttBridge::handleObjects(const QByteArray &payload) {
         out.push_back(s);
     }
     emit objectsUpdated(out);
-}
-
-void MqttBridge::handleLidarScan(const QByteArray &payload) {
-    // 가정: RPi 파이프라인이 Depth-Edge -> 평면 투영을 마친 라인 목록을 올린다.
-    //   {"edges":[{"a":{"x":..,"y":..},"b":{"x":..,"y":..}}, ...]}
-    // 원시 포인트 클라우드를 그대로 올리는 펌웨어라면 여기서 라인 피팅이 선행되어야 한다.
-    QVector<MapEdge> edges;
-    for (const auto &v : QJsonDocument::fromJson(payload).object().value("edges").toArray()) {
-        const auto o = v.toObject();
-        const auto a = o.value("a").toObject();
-        const auto b = o.value("b").toObject();
-        edges.push_back({QPointF(a.value("x").toDouble(), a.value("y").toDouble()),
-                          QPointF(b.value("x").toDouble(), b.value("y").toDouble())});
-    }
-    if (!edges.isEmpty()) emit mapEdgesUpdated(edges);
-}
-
-void MqttBridge::handleCalib(const QByteArray &payload) {
-    const auto o = QJsonDocument::fromJson(payload).object();
-    CalibState c;
-    c.ncc            = o.value("ncc").toDouble();
-    c.reprojPx        = o.value("reproj_px").toDouble();
-    c.retry           = o.value("retry").toInt();
-    c.maxRetry        = o.value("max_retry").toInt(3);
-    c.progress        = o.value("progress").toInt();
-    c.scanPoints      = o.value("points").toInt();
-    c.coverage        = o.value("coverage").toDouble();
-    c.inliers         = o.value("inliers").toInt();
-    c.candidateLines  = o.value("candidate_lines").toInt();
-    c.stamp           = QDateTime::currentDateTime();
-    emit calibUpdated(c);
 }

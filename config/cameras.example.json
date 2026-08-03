@@ -1,0 +1,9 @@
+{
+  "_comment": "실제 값은 config/cameras.json 으로 복사해서 채우세요 (커밋되지 않음). Hanwha 멀티센서 카메라(PNM 시리즈) 기준 rtsp://USER:PASSWORD@IP:554/<0~3>/profile2/media.smp 형식입니다.",
+  "channels": {
+    "1": "rtsp://USER:PASSWORD@CAMERA_IP:554/0/profile2/media.smp",
+    "2": "rtsp://USER:PASSWORD@CAMERA_IP:554/1/profile2/media.smp",
+    "3": "rtsp://USER:PASSWORD@CAMERA_IP:554/2/profile2/media.smp",
+    "4": "rtsp://USER:PASSWORD@CAMERA_IP:554/3/profile2/media.smp"
+  }
+}

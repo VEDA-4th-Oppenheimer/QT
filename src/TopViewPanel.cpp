@@ -137,13 +137,17 @@ void TopViewPanel::setImu(const ImuState &imu) {
 }
 
 void TopViewPanel::setCalib(const CalibState &c) {
-    m_coverage->setText(QString("3D MAP COVERAGE %1%").arg(int(c.coverage * 100)));
-    const QString nccColor = c.ncc >= 0.72 ? Theme::Ok.name() : Theme::DangerText.name();
-    m_calibSummary->setText(QString("NCC %1  ·  reproj %2 px  ·  %3")
-                                 .arg(c.ncc, 0, 'f', 3)
-                                 .arg(c.reprojPx, 0, 'f', 2)
+    const int pct = (c.status == "PASS" || c.status == "EXPORT") ? 100 : c.progress;
+    m_coverage->setText(QString("SCAN PROGRESS %1%").arg(pct));
+
+    const bool ok = c.status == "PASS";
+    const QString statusColor = ok ? Theme::Ok.name() : (c.status == "FAIL" ? Theme::DangerText.name() : Theme::TextDim2.name());
+    m_calibSummary->setText(QString("%1  ·  edge_rmse %2 px  ·  inlier %3%  ·  %4")
+                                 .arg(c.status)
+                                 .arg(c.edgeRmsePx, 0, 'f', 2)
+                                 .arg(int(c.inlierRatio * 100))
                                  .arg(c.stamp.isValid() ? c.stamp.toString("HH:mm:ss") : QString("--:--:--")));
-    m_calibSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(nccColor));
+    m_calibSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(statusColor));
     m_scanPts->setText(QLocale().toString(c.scanPoints));
     m_retry->setText(QString("%1/%2").arg(c.retry).arg(c.maxRetry));
 }

@@ -10,6 +10,7 @@
 #include "EventLogTab.h"
 #include "MqttBridge.h"
 #include "DemoBridge.h"
+#include "RtspSource.h"
 #include "Theme.h"
 
 #include <QVBoxLayout>
@@ -27,7 +28,8 @@ QString sourceForTag(const QString &tag) {
         return "RPi4B";
     if (tag == "MQTT")  return "BROKER";
     if (tag == "POWER") return "KIT";
-    if (tag == "TILT")  return "IMU";
+    if (tag == "TILT" || tag == "LEVEL") return "IMU";
+    if (tag == "RTSP")  return "CAMERA";
     return "KIT";
 }
 }
@@ -40,6 +42,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     m_mqtt = new MqttBridge(this);
     m_demo = new DemoBridge(this);
+    m_video = new RtspSource(this);
     m_topBar = new TopBar(this);
     m_banner = new TiltBanner(this);
     m_statusBar = new StatusBar(this);
@@ -100,6 +103,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         connect(src, &DataBridge::logLine, this, &MainWindow::appendLog);
     }
 
+    // RTSP 실제 카메라 영상 — config/cameras.json 에 설정된 채널만 덮어씌운다.
+    // (설정 안 된 채널은 위 Demo/Live 브리지가 계속 상태를 채운다.)
+    connect(m_video, &RtspSource::frameReceived, this, [this](int ch, const QImage &img) {
+        if (ch >= 1 && ch <= 4) m_tiles[ch - 1]->setFrame(img);
+    });
+    connect(m_video, &RtspSource::channelStatusChanged, this, [this](int ch, bool online, double fps) {
+        if (ch < 1 || ch > 4) return;
+        m_tiles[ch - 1]->setOnline(online);
+        m_tiles[ch - 1]->setFps(fps);
+        m_devicesTab->setChannelOnline(ch, online);
+    });
+    connect(m_video, &RtspSource::logLine, this, &MainWindow::appendLog);
+
     connect(m_banner, &TiltBanner::tiltOnset, this, [this](const ImuState &imu) {
         appendLog("TILT", QString(QString::fromUtf8("킷 수평 이탈 감지 — Roll %1° / Pitch %2°. 재설치 필요"))
                               .arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1));
@@ -126,6 +142,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     });
 
     setDemoMode(true);
+    m_video->loadConfigAndStart();
 }
 
 QWidget *MainWindow::buildDashboardTab() {
@@ -134,12 +151,14 @@ QWidget *MainWindow::buildDashboardTab() {
     l->setContentsMargins(10, 10, 10, 10);
     l->setSpacing(10);
 
-    // 좌: 2x2 CCTV 그리드 (천장 중앙 4채널, 사분면 커버)
+    // 좌: 2x2 CCTV 그리드. PNM-C16083RVQ 멀티센서 카메라 4채널, RTSP 직결(RtspSource) —
+    // config/cameras.json 채널별 sensor 0~3 = /profile2/media.smp. MVP는 대표 1채널(CH1)
+    // 기준이지만 하드웨어가 4채널을 모두 지원해 나머지도 함께 보여준다.
     const ChannelState defs[4] = {
-        {1, QString::fromUtf8("북측 (0°) · 창측 벽면"),   "cctv/ch1/h264", false, 0, QString::fromUtf8("1920x1080 · WiseAI ON")},
-        {2, QString::fromUtf8("동측 (90°) · 회의 구역"),  "cctv/ch2/h264", false, 0, QString::fromUtf8("1920x1080 · WiseAI ON")},
-        {3, QString::fromUtf8("남측 (180°) · 출입문"),    "cctv/ch3/h264", false, 0, QString::fromUtf8("1920x1080 · WiseAI ON")},
-        {4, QString::fromUtf8("서측 (270°) · 기둥/복도"), "cctv/ch4/h264", false, 0, QString::fromUtf8("NO STREAM")},
+        {1, QString::fromUtf8("북측 (0°) · 창측 벽면"),   "RTSP CH1 · sensor 0", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {2, QString::fromUtf8("동측 (90°) · 회의 구역"),  "RTSP CH2 · sensor 1", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {3, QString::fromUtf8("남측 (180°) · 출입문"),    "RTSP CH3 · sensor 2", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {4, QString::fromUtf8("서측 (270°) · 기둥/복도"), "RTSP CH4 · sensor 3", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
     };
     auto *grid = new QGridLayout;
     grid->setSpacing(10);

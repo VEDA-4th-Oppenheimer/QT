@@ -14,6 +14,7 @@ class EventLogTab;
 class DataBridge;
 class MqttBridge;
 class DemoBridge;
+class RtspSource;
 class QTabWidget;
 
 class MainWindow : public QMainWindow {
@@ -38,5 +39,6 @@ private:
 
     MqttBridge *m_mqtt = nullptr;
     DemoBridge *m_demo = nullptr;
+    RtspSource *m_video = nullptr;
     bool m_demoMode = true;
 };

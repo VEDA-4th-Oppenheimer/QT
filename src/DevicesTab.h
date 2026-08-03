@@ -19,5 +19,4 @@ private:
     QLabel *m_mpuDot, *m_mpuValue;
     QLabel *m_tofDot, *m_tofValue;
     QTableWidget *m_table;
-    int m_ch4Row = -1;
 };

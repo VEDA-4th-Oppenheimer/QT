@@ -8,6 +8,8 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(PahoMqttCpp REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
 
 qt_standard_project_setup()
 
@@ -26,6 +28,8 @@ set(SOURCES
     src/EventLogTab.cpp
     src/MqttBridge.cpp
     src/DemoBridge.cpp
+    src/RtspDecoder.cpp
+    src/RtspSource.cpp
 )
 
 set(HEADERS
@@ -45,6 +49,8 @@ set(HEADERS
     src/EventLogTab.h
     src/MqttBridge.h
     src/DemoBridge.h
+    src/RtspDecoder.h
+    src/RtspSource.h
 )
 
 qt_add_executable(spatial_vms ${SOURCES} ${HEADERS})
@@ -54,4 +60,5 @@ target_include_directories(spatial_vms PRIVATE src)
 target_link_libraries(spatial_vms PRIVATE
     Qt6::Widgets
     PahoMqttCpp::paho-mqttpp3
+    PkgConfig::FFMPEG
 )
