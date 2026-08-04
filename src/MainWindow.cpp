@@ -86,6 +86,14 @@ void MainWindow::setThemeMode(Theme::Mode mode) {
 void MainWindow::rebuildUi() {
     setStyleSheet(Theme::appStyleSheet());
 
+    // m_mqtt/m_demo/m_video 는 MainWindow 소유라 테마 전환으로 중앙 위젯이
+    // 통째로 바뀌어도 살아남는다 — 그래서 아래에서 이 객체들을 this(MainWindow)
+    // 로 다시 connect() 하기 전에 이전 연결을 끊어야 한다. 안 그러면 재생성될
+    // 때마다 연결이 쌓여서 이벤트 하나가 N번 중복 처리된다(EVENT LOG 중복 등).
+    m_demo->disconnect(this);
+    m_mqtt->disconnect(this);
+    m_video->disconnect(this);
+
     QWidget *old = takeCentralWidget();
     delete old;
 
