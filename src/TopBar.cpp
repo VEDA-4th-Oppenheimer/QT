@@ -33,14 +33,14 @@ QFrame *chip(QWidget *parent, const QString &label, QLabel **value, QLabel **dot
     l->setContentsMargins(10, 5, 10, 5);
     l->setSpacing(7);
     auto *k = new QLabel(label, f);
-    k->setStyleSheet(Theme::mono(10, 500) + "color:#8e9aa5;letter-spacing:1px;");
+    k->setStyleSheet(Theme::mono(10, 500) + QString("color:%1;letter-spacing:1px;").arg(Theme::TextDim.name()));
     l->addWidget(k);
     if (dot) {
         *dot = pulseDot(f, Theme::TextFaint);
         l->addWidget(*dot);
     }
     *value = new QLabel(f);
-    (*value)->setStyleSheet(Theme::mono(10, 500) + "color:#e4e9ee;");
+    (*value)->setStyleSheet(Theme::mono(10, 500) + QString("color:%1;").arg(Theme::Text.name()));
     l->addWidget(*value);
     return f;
 }
@@ -48,16 +48,17 @@ QFrame *chip(QWidget *parent, const QString &label, QLabel **value, QLabel **dot
 
 TopBar::TopBar(QWidget *parent) : QFrame(parent) {
     setFixedHeight(54);
-    setStyleSheet("background:#11161b;border-bottom:1px solid #212a32;");
+    setStyleSheet(QString("background:%1;border-bottom:1px solid %2;")
+        .arg(Theme::BarBg.name(), Theme::Border.name()));
 
     auto *l = new QHBoxLayout(this);
     l->setContentsMargins(18, 0, 18, 0);
     l->setSpacing(16);
 
     auto *title = new QLabel(QString::fromUtf8("SPATIAL·VMS"), this);
-    title->setStyleSheet(Theme::mono(14, 700) + "letter-spacing:2px;color:#e4e9ee;");
+    title->setStyleSheet(Theme::mono(14, 700) + QString("letter-spacing:2px;color:%1;").arg(Theme::Text.name()));
     auto *sub = new QLabel("v1.0 / ADTS SCANNER KIT", this);
-    sub->setStyleSheet(Theme::mono(10) + "letter-spacing:2px;color:#5f6c78;");
+    sub->setStyleSheet(Theme::mono(10) + QString("letter-spacing:2px;color:%1;").arg(Theme::TextFaint.name()));
 
     l->addWidget(title);
     l->addWidget(sub);

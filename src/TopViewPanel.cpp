@@ -17,16 +17,16 @@ QLabel *legendDot(QWidget *parent, const QColor &c) {
 QFrame *vDivider(QWidget *parent) {
     auto *f = new QFrame(parent);
     f->setFrameShape(QFrame::VLine);
-    f->setStyleSheet("background:#1a2229;border:none;max-width:1px;min-width:1px;");
+    f->setStyleSheet(QString("background:%1;border:none;max-width:1px;min-width:1px;").arg(Theme::PanelHead.name()));
     return f;
 }
 QVBoxLayout *statCell(QWidget *parent, const QString &label, QLabel **value) {
     auto *box = new QVBoxLayout;
     box->setSpacing(3);
     auto *k = new QLabel(label, parent);
-    k->setStyleSheet(Theme::mono(10) + "color:#5f6c78;letter-spacing:1px;");
+    k->setStyleSheet(Theme::mono(10) + QString("color:%1;letter-spacing:1px;").arg(Theme::TextFaint.name()));
     *value = new QLabel(parent);
-    (*value)->setStyleSheet(Theme::mono(19, 700) + "color:#c7d1da;");
+    (*value)->setStyleSheet(Theme::mono(19, 700) + QString("color:%1;").arg(Theme::Text3.name()));
     box->addWidget(k);
     box->addWidget(*value);
     return box;
@@ -48,11 +48,11 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     auto *hl = new QHBoxLayout(head);
     hl->setContentsMargins(11, 0, 11, 0);
     auto *ht = new QLabel("TOP-VIEW", head);
-    ht->setStyleSheet(Theme::mono(10, 700) + "color:#3fbfcc;letter-spacing:2px;");
+    ht->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;letter-spacing:2px;").arg(Theme::Accent.name()));
     auto *hs = new QLabel(QString::fromUtf8("실내 3D 맵 조감 단면 · 천장 중앙 기준"), head);
-    hs->setStyleSheet("color:#7b8792;font-size:11px;");
+    hs->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextMuted.name()));
     auto *hr = new QLabel("1 grid = 1.0 m", head);
-    hr->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
+    hr->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextFaint.name()));
     hl->addWidget(ht); hl->addSpacing(8); hl->addWidget(hs); hl->addStretch(1); hl->addWidget(hr);
 
     // 캔버스
@@ -61,24 +61,25 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
 
     // 범례 바
     auto *legend = new QFrame(this);
-    legend->setStyleSheet("background:#0e1317;border:none;border-top:1px solid #1e262d;");
+    legend->setStyleSheet(QString("background:%1;border:none;border-top:1px solid %2;")
+        .arg(Theme::BarBg.name(), Theme::BorderSoft.name()));
     auto *ll = new QHBoxLayout(legend);
     ll->setContentsMargins(11, 8, 11, 8);
     ll->setSpacing(16);
-    auto mono10 = [](QLabel *l) { l->setStyleSheet(Theme::mono(10) + "color:#7b8792;"); };
+    auto mono10 = [](QLabel *l) { l->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextMuted.name())); };
 
     ll->addWidget(legendDot(legend, Theme::Warn));
     auto *lp = new QLabel("PERSON", legend); mono10(lp); ll->addWidget(lp);
 
     auto *wallSwatch = new QLabel(legend);
     wallSwatch->setFixedSize(14, 2);
-    wallSwatch->setStyleSheet("background:#46596a;");
+    wallSwatch->setStyleSheet(QString("background:%1;").arg(Theme::Wall.name()));
     ll->addWidget(wallSwatch);
     auto *lw = new QLabel("WALL / EDGE", legend); mono10(lw); ll->addWidget(lw);
 
     auto *fovSwatch = new QLabel(legend);
     fovSwatch->setFixedSize(14, 10);
-    fovSwatch->setStyleSheet("border:1px dashed #2a5f68;");
+    fovSwatch->setStyleSheet(QString("border:1px dashed %1;").arg(Theme::ScanHighlight.name()));
     ll->addWidget(fovSwatch);
     auto *lf = new QLabel(QString::fromUtf8("CH FOV ×4"), legend); mono10(lf); ll->addWidget(lf);
 
@@ -89,16 +90,16 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
 
     // 하단 통계 바
     auto *stats = new QFrame(this);
-    stats->setStyleSheet("background:#0e1317;border:none;");
+    stats->setStyleSheet(QString("background:%1;border:none;").arg(Theme::BarBg.name()));
     auto *sv = new QVBoxLayout(stats);
     sv->setContentsMargins(11, 8, 11, 10);
     sv->setSpacing(8);
 
     auto *summary = new QHBoxLayout;
     auto *sTitle = new QLabel("SCAN", stats);
-    sTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    sTitle->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     m_scanSummary = new QLabel(stats);
-    m_scanSummary->setStyleSheet(Theme::mono(11) + "color:#9aa6b1;");
+    m_scanSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(Theme::TextDim2.name()));
     summary->addWidget(sTitle);
     summary->addWidget(m_scanSummary, 1);
     sv->addLayout(summary);

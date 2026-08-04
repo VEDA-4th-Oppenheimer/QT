@@ -18,15 +18,15 @@ namespace {
 // 시안의 45° 스트라이프 플레이스홀더
 class StripedPlaceholder : public QFrame {
 public:
-    StripedPlaceholder(const QString &text, QWidget *parent, const QColor &bg = QColor("#12171b"))
+    StripedPlaceholder(const QString &text, QWidget *parent, const QColor &bg = Theme::PanelHead)
         : QFrame(parent), m_text(text), m_bg(bg) {
         setFixedHeight(170);
-        setStyleSheet("border:1px solid #1c242b;border-radius:4px;");
+        setStyleSheet(QString("border:1px solid %1;border-radius:4px;").arg(Theme::BorderSoft.name()));
     }
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
-        p.fillRect(rect(), QColor("#0f1418"));
+        p.fillRect(rect(), Theme::Panel);
         p.setPen(QPen(m_bg, 9));
         for (int x = -height(); x < width(); x += 18) p.drawLine(x, height(), x + height(), 0);
         QFont f("JetBrains Mono"); f.setPixelSize(10); p.setFont(f);
@@ -47,7 +47,7 @@ DatasetTab::DatasetTab(QWidget *parent) : QWidget(parent) {
     auto *left = new QVBoxLayout;
     auto *head = new QHBoxLayout;
     auto *title = new QLabel("CAPTURE SETS", this);
-    title->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    title->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     auto *exportBtn = new QPushButton("EXPORT SET", this);
     exportBtn->setObjectName("accent");
     connect(exportBtn, &QPushButton::clicked, this, &DatasetTab::exportRequested);
@@ -72,18 +72,18 @@ DatasetTab::DatasetTab(QWidget *parent) : QWidget(parent) {
     auto *right = new QVBoxLayout;
     right->setSpacing(10);
     auto *rgbLabel = new QLabel("RGB FRAME 1920×1080", this);
-    rgbLabel->setStyleSheet(Theme::mono(10) + "color:#5f6c78;letter-spacing:1px;");
+    rgbLabel->setStyleSheet(Theme::mono(10) + QString("color:%1;letter-spacing:1px;").arg(Theme::TextFaint.name()));
     right->addWidget(rgbLabel);
     right->addWidget(new StripedPlaceholder("RGB FRAME 1920×1080", this));
 
     auto *mapLabel = new QLabel("INDOOR 3D POINT MAP", this);
-    mapLabel->setStyleSheet(Theme::mono(10) + "color:#5f6c78;letter-spacing:1px;");
+    mapLabel->setStyleSheet(Theme::mono(10) + QString("color:%1;letter-spacing:1px;").arg(Theme::TextFaint.name()));
     right->addWidget(mapLabel);
-    auto *pointMap = new StripedPlaceholder("INDOOR 3D POINT MAP", this, QColor("#080b0e"));
+    auto *pointMap = new StripedPlaceholder("INDOOR 3D POINT MAP", this, Theme::MapBg);
     right->addWidget(pointMap);
 
     auto *aug = new QLabel(QString::fromUtf8("Augmentation / RT perturb ×12"), this);
-    aug->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
+    aug->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextFaint.name()));
     right->addWidget(aug);
     right->addStretch(1);
 

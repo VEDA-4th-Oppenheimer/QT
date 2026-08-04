@@ -9,24 +9,26 @@
 
 namespace {
 QPair<QColor, QColor> tagColors(const QString &tag) {
-    static const QMap<QString, QPair<QColor, QColor>> kMap = {
-        {"TILT",   {QColor("#3a1a16"), QColor("#ff8175")}},
-        {"RETRY",  {QColor("#2e2413"), QColor("#e2a33c")}},
-        {"MQTT",   {QColor("#2e2413"), QColor("#e2a33c")}},
-        {"CALIB",  {QColor("#16241d"), QColor("#6fdcab")}},
-        {"SCAN",   {QColor("#152229"), QColor("#8fd9e2")}},
-        {"LSD",    {QColor("#152229"), QColor("#8fd9e2")}},
-        {"MATCH",  {QColor("#152229"), QColor("#8fd9e2")}},
-        {"CHECK",  {QColor("#2e2413"), QColor("#e2a33c")}},
-        {"EXPORT", {QColor("#16241d"), QColor("#6fdcab")}},
-        {"OBJECT", {QColor("#152229"), QColor("#8fd9e2")}},
-        {"MAP",    {QColor("#152229"), QColor("#8fd9e2")}},
-        {"POWER",  {QColor("#1b2127"), QColor("#a9b4bd")}},
-        {"LEVEL",  {QColor("#3a1a16"), QColor("#ff8175")}},
-        {"RTSP",   {QColor("#152229"), QColor("#8fd9e2")}},
-        {"ERROR",  {QColor("#3a1a16"), QColor("#ff8175")}},
+    // 태그별 배경/글자색을 Theme:: 의미색 5종(danger/warn/ok/accent/neutral)에서
+    // 매번 새로 뽑는다 — 모드가 바뀌어도(setMode) 여기서 그대로 반영된다.
+    const QMap<QString, QPair<QColor, QColor>> map = {
+        {"TILT",   {Theme::DangerBg, Theme::DangerText}},
+        {"RETRY",  {Theme::WarnBg,   Theme::Warn}},
+        {"MQTT",   {Theme::WarnBg,   Theme::Warn}},
+        {"CALIB",  {Theme::OkBg,     Theme::OkBright}},
+        {"SCAN",   {Theme::AccentBg, Theme::AccentBright}},
+        {"LSD",    {Theme::AccentBg, Theme::AccentBright}},
+        {"MATCH",  {Theme::AccentBg, Theme::AccentBright}},
+        {"CHECK",  {Theme::WarnBg,   Theme::Warn}},
+        {"EXPORT", {Theme::OkBg,     Theme::OkBright}},
+        {"OBJECT", {Theme::AccentBg, Theme::AccentBright}},
+        {"MAP",    {Theme::AccentBg, Theme::AccentBright}},
+        {"POWER",  {Theme::NeutralBg, Theme::NeutralFg}},
+        {"LEVEL",  {Theme::DangerBg, Theme::DangerText}},
+        {"RTSP",   {Theme::AccentBg, Theme::AccentBright}},
+        {"ERROR",  {Theme::DangerBg, Theme::DangerText}},
     };
-    return kMap.value(tag, {QColor("#1b2127"), QColor("#a9b4bd")});
+    return map.value(tag, {Theme::NeutralBg, Theme::NeutralFg});
 }
 }
 

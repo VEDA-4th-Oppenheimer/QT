@@ -21,6 +21,7 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QAction>
+#include <QActionGroup>
 #include <QDateTime>
 #include <QFile>
 #include <QJsonDocument>
@@ -43,11 +44,51 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle(QString::fromUtf8("SPATIAL·VMS — Indoor 3D Mapping Console"));
     resize(1600, 940);
     setMinimumSize(1440, 860);
-    setStyleSheet(Theme::appStyleSheet());
 
     m_mqtt = new MqttBridge(this);
     m_demo = new DemoBridge(this);
     m_video = new RtspSource(this);
+
+    auto *modeMenu = menuBar()->addMenu(QString::fromUtf8("모드"));
+    auto *demoAction = modeMenu->addAction(QString::fromUtf8("Demo Mode (브로커 없이 실행)"));
+    demoAction->setCheckable(true);
+    demoAction->setChecked(false);
+    connect(demoAction, &QAction::toggled, this, &MainWindow::setDemoMode);
+
+    // 개발자모드(다크 + 한화비전 오렌지 액센트) / 사용자모드(라이트) — 화면 구성은
+    // 동일, 색만 바뀐다. Qt 스타일시트는 위젯 생성 시점에 굳어버리므로(재적용
+    // 안 됨), 전환 시 중앙 위젯을 통째로 다시 만든다(rebuildUi 참고).
+    auto *themeMenu = menuBar()->addMenu(QString::fromUtf8("테마"));
+    auto *devModeAction = themeMenu->addAction(QString::fromUtf8("개발자 모드 (다크 · 한화비전)"));
+    auto *userModeAction = themeMenu->addAction(QString::fromUtf8("사용자 모드 (라이트)"));
+    devModeAction->setCheckable(true);
+    userModeAction->setCheckable(true);
+    devModeAction->setChecked(true);
+    auto *themeGroup = new QActionGroup(this);
+    themeGroup->setExclusive(true);
+    themeGroup->addAction(devModeAction);
+    themeGroup->addAction(userModeAction);
+    connect(devModeAction, &QAction::triggered, this, [this] { setThemeMode(Theme::Mode::Developer); });
+    connect(userModeAction, &QAction::triggered, this, [this] { setThemeMode(Theme::Mode::User); });
+
+    rebuildUi();
+
+    setDemoMode(false);
+    m_video->loadConfigAndStart();
+}
+
+void MainWindow::setThemeMode(Theme::Mode mode) {
+    if (Theme::CurrentMode == mode) return;
+    Theme::setMode(mode);
+    rebuildUi();
+}
+
+void MainWindow::rebuildUi() {
+    setStyleSheet(Theme::appStyleSheet());
+
+    QWidget *old = takeCentralWidget();
+    delete old;
+
     m_topBar = new TopBar(this);
     m_banner = new TiltBanner(this);
     m_statusBar = new StatusBar(this);
@@ -73,33 +114,34 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     l->addWidget(m_statusBar);
     setCentralWidget(central);
 
-    auto *modeMenu = menuBar()->addMenu(QString::fromUtf8("모드"));
-    auto *demoAction = modeMenu->addAction(QString::fromUtf8("Demo Mode (브로커 없이 실행)"));
-    demoAction->setCheckable(true);
-    demoAction->setChecked(true);
-    connect(demoAction, &QAction::toggled, this, &MainWindow::setDemoMode);
-
     // --- 시그널 배선 (데모/라이브 소스 모두 동일 슬롯으로 수신) -----------------
+    // 위젯을 새로 만들 때마다 다시 연결한다 — 이전 위젯이 delete 되면서 이전
+    // connect() 는 Qt 가 알아서 끊어준다(브리지 쪽 m_mqtt/m_demo/m_video 는
+    // MainWindow 소유라 재생성 사이에도 그대로 살아있는다).
     for (DataBridge *src : {static_cast<DataBridge *>(m_demo), static_cast<DataBridge *>(m_mqtt)}) {
         connect(src, &DataBridge::brokerStateChanged, m_topBar, &TopBar::setBrokerConnected);
         connect(src, &DataBridge::imuUpdated, this, [this](const ImuState &imu) {
+            m_lastImu = imu; m_haveImu = true;
             m_topBar->setImu(imu);
             m_topView->setImu(imu);
             m_devicesTab->setImu(imu);
             m_banner->update(imu);
         });
         connect(src, &DataBridge::daemonStateUpdated, this, [this](const DaemonState &s) {
+            m_lastDaemonState = s; m_haveDaemonState = true;
             m_topBar->setDaemonState(s);
             m_topView->setDaemonState(s);
             m_calibTab->setDaemonState(s);
             m_statusBar->setDaemonState(s);
         });
         connect(src, &DataBridge::scanProgressUpdated, this, [this](const ScanProgress &p) {
+            m_lastProgress = p; m_haveProgress = true;
             m_topView->setScanProgress(p);
             m_calibTab->setScanProgress(p);
             m_devicesTab->setScanProgress(p);
         });
         connect(src, &DataBridge::scanResultUpdated, this, [this](const ScanResult &r) {
+            m_lastResult = r; m_haveResult = true;
             m_topView->setScanResult(r);
             m_calibTab->setScanResult(r);
             // durationS 는 실구현(develop 브랜치)이 아직 안 보낸다 — 있을 때만 붙인다.
@@ -165,8 +207,28 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         appendLog("EXPORT", QString::fromUtf8("RGB-D 데이터셋 내보내기 완료"));
     });
 
-    setDemoMode(true);
-    m_video->loadConfigAndStart();
+    // 테마 전환으로 위젯을 새로 만든 경우, 다음 업데이트가 오기 전까지
+    // OFFLINE/기본값으로 잠깐 보이지 않도록 마지막으로 받은 값을 즉시 채운다.
+    if (m_haveDaemonState) {
+        m_topBar->setDaemonState(m_lastDaemonState);
+        m_topView->setDaemonState(m_lastDaemonState);
+        m_calibTab->setDaemonState(m_lastDaemonState);
+        m_statusBar->setDaemonState(m_lastDaemonState);
+    }
+    if (m_haveImu) {
+        m_topBar->setImu(m_lastImu);
+        m_topView->setImu(m_lastImu);
+        m_devicesTab->setImu(m_lastImu);
+    }
+    if (m_haveProgress) {
+        m_topView->setScanProgress(m_lastProgress);
+        m_calibTab->setScanProgress(m_lastProgress);
+        m_devicesTab->setScanProgress(m_lastProgress);
+    }
+    if (m_haveResult) {
+        m_topView->setScanResult(m_lastResult);
+        m_calibTab->setScanResult(m_lastResult);
+    }
 }
 
 QWidget *MainWindow::buildDashboardTab() {
