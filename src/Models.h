@@ -34,10 +34,19 @@ struct ImuState {
 
 // ---------------------------------------------------------------------------
 // 아래 4개 구조체는 MQTT_INTERFACE_CONTRACT.md v1.0 (데몬=이현우/Qt=송영빈/
-// 브로커=이광진 서명)을 그대로 따른다. 필드명은 계약서 §3의 JSON 키와 1:1 대응.
+// 브로커=이광진 서명)의 JSON 키를 기준으로 하되, RPi develop 브랜치 실구현
+// (daemon/modules/mqtt/mqtt_module.c, 2026-08-03 mainvoid00)에 맞춰 조정했다.
+// 문서와 실구현이 다른 두 지점:
+//   1. 토픽에 kit_id 세그먼트가 없다 — 계약 §2는 "adts/kit1/..."이지만 실구현은
+//      "adts/..." (브로커가 킷마다 상주하므로 kit_id 가 중복 정보라는 판단, 커밋
+//      메시지 참고). 바뀌면 다시 상의할 것.
+//   2. state/scan 페이로드가 계약 §3.4보다 적다 — 실구현은
+//      {req_id,ok,pcd,points,stm_reported,ts} 만 보낸다. session_id/scan_id/json/
+//      rows/columns/expected/duration_s 는 아직 안 보낸다. 필드는 계약대로 남겨두되
+//      (나중에 추가되면 코드 변경 없이 채워짐) UI 는 실제로 오는 값만 표시한다.
 // ---------------------------------------------------------------------------
 
-// adts/kit1/state/daemon (retained) — 계약 §3.3. LWT 로 데몬 사망 시 자동으로
+// adts/state/daemon (retained) — 계약 §3.3. LWT 로 데몬 사망 시 자동으로
 // state="OFFLINE", online=false 가 온다.
 struct DaemonState {
     QString  state = "OFFLINE";   // IDLE / SCANNING / EXPORT / DISARM / OFFLINE
@@ -51,19 +60,22 @@ struct DaemonState {
     QDateTime ts;
 };
 
-// adts/kit1/state/scan (retained) — 계약 §3.4. 포인트클라우드 파일 자체는 오지
-// 않고 경로만 온다(파일 전달 방식은 미결, §9).
+// adts/state/scan (retained) — 계약 §3.4. 포인트클라우드 파일 자체는 오지
+// 않고 경로만 온다(파일 전달 방식은 미결, §9). session_id/scan_id/jsonPath/
+// rows/columns/expected/durationS 는 실구현이 아직 안 보내는 필드 —
+// 항상 빈 문자열/0 으로 온다(UI 에서 표시하지 않음, 상단 주석 참고).
 struct ScanResult {
     QString reqId;
     bool    ok = false;
     QString sessionId, scanId, pcdPath, jsonPath;
     int     rows = 0, columns = 0;
     quint32 points = 0, expected = 0;
+    quint32 stmReported = 0;   // STM32 가 자체 보고한 점 수(대조용) — 실구현 필드
     double  durationS = 0.0;
     QDateTime ts;
 };
 
-// adts/kit1/event/progress (QoS0, not retained, ~2Hz) — 계약 §3.6. 유실 가정,
+// adts/event/progress (QoS0, not retained, ~2Hz) — 계약 §3.6. 유실 가정,
 // 완료 판정은 DaemonState.state 로 할 것.
 struct ScanProgress {
     QString reqId;
@@ -72,8 +84,10 @@ struct ScanProgress {
     QDateTime ts;
 };
 
-// adts/kit1/event/error — 계약 §3.5. code 1~6 은 STM32 CMD_ERROR(protocol.h)
-// 원본, 100/101 은 데몬이 링크단절/홈타임아웃을 감지해 합성한 코드.
+// adts/event/error — 계약 §3.5. code 1~6 은 STM32 CMD_ERROR(protocol.h)
+// 원본, 100/101 은 데몬이 링크단절/홈타임아웃을 감지해 합성한 코드. 실구현은
+// STM 오류를 항상 name="STM_ERROR"(코드별 세부 이름 아님)로, fatal 필드 없이
+// 보낸다 — fatal 은 항상 false 로 들어온다(아직 안 쓰임).
 struct KitError {
     QString reqId;
     int     code = 0;

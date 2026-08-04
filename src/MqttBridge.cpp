@@ -15,16 +15,17 @@ constexpr int kQosCmd = 1;
 constexpr int kQosBestEffort = 0;
 constexpr int kKeepAliveSec = 30;
 
-constexpr char kTopicCmdScan[]       = "adts/kit1/cmd/scan";
-constexpr char kTopicCmdStop[]       = "adts/kit1/cmd/stop";
-constexpr char kTopicCmdHome[]       = "adts/kit1/cmd/home";
-constexpr char kTopicCmdDisarm[]     = "adts/kit1/cmd/disarm";
-constexpr char kTopicStateWildcard[] = "adts/kit1/state/#";
-constexpr char kTopicEventWildcard[] = "adts/kit1/event/#";
-constexpr char kTopicStateDaemon[]   = "adts/kit1/state/daemon";
-constexpr char kTopicStateScan[]     = "adts/kit1/state/scan";
-constexpr char kTopicEventProgress[] = "adts/kit1/event/progress";
-constexpr char kTopicEventError[]    = "adts/kit1/event/error";
+// kit_id 세그먼트 없음 — RPi develop 브랜치 실구현 기준(Models.h 상단 주석 참고).
+constexpr char kTopicCmdScan[]       = "adts/cmd/scan";
+constexpr char kTopicCmdStop[]       = "adts/cmd/stop";
+constexpr char kTopicCmdHome[]       = "adts/cmd/home";
+constexpr char kTopicCmdDisarm[]     = "adts/cmd/disarm";
+constexpr char kTopicStateWildcard[] = "adts/state/#";
+constexpr char kTopicEventWildcard[] = "adts/event/#";
+constexpr char kTopicStateDaemon[]   = "adts/state/daemon";
+constexpr char kTopicStateScan[]     = "adts/state/scan";
+constexpr char kTopicEventProgress[] = "adts/event/progress";
+constexpr char kTopicEventError[]    = "adts/event/error";
 
 QDateTime tsFromUnixSeconds(qint64 secs) {
     return secs > 0 ? QDateTime::fromSecsSinceEpoch(secs) : QDateTime::currentDateTime();
@@ -45,7 +46,13 @@ void MqttBridge::connectToBroker(const QString &host, quint16 port, const QStrin
 
     const QString caCert     = certDir.isEmpty() ? QString() : certDir + "/ca.crt";
     const QString clientCert = certDir.isEmpty() ? QString() : certDir + "/qt-console.crt";
-    const QString clientKey  = certDir.isEmpty() ? QString() : certDir + "/qt-console.key";
+    // broker/gen-certs.sh(RPi 저장소, 이광진)는 기본적으로 PKCS#8 qt-console.key 와,
+    // QSslKey 용으로 변환한 qt-console-trad.key 를 같이 만들어 준다. Paho(OpenSSL
+    // 직접 사용)는 PKCS#8 을 그대로 읽으므로 원래 이름을 우선 찾고, 혹시 trad 버전만
+    // 복사해왔어도 그대로 동작하도록 폴백한다.
+    const QString clientKeyPlain = certDir.isEmpty() ? QString() : certDir + "/qt-console.key";
+    const QString clientKeyTrad  = certDir.isEmpty() ? QString() : certDir + "/qt-console-trad.key";
+    const QString clientKey = QFile::exists(clientKeyPlain) ? clientKeyPlain : clientKeyTrad;
     const bool haveCerts = !certDir.isEmpty()
         && QFile::exists(caCert) && QFile::exists(clientCert) && QFile::exists(clientKey);
 
@@ -66,6 +73,9 @@ void MqttBridge::connectToBroker(const QString &host, quint16 port, const QStrin
         ssl.set_trust_store(caCert.toStdString());
         ssl.set_key_store(clientCert.toStdString());
         ssl.set_private_key(clientKey.toStdString());
+        // 데몬 쪽(mqtt_module.c)도 mosquitto_tls_opts_set(..., "tlsv1.2", ...)로
+        // 고정한다 — 브로커 협상 폭을 양쪽에서 동일하게 맞춘다.
+        ssl.set_ssl_version(3 /*MQTT_SSL_VERSION_TLS_1_2*/);
         opts.set_ssl(ssl);
         emit logLine("MQTT", QString("mTLS 인증서 로드됨 (%1) — ssl://%2:%3").arg(certDir, host).arg(port));
     } else {
@@ -230,18 +240,23 @@ void MqttBridge::handleStateScan(const QByteArray &payload) {
     const QString reqId = o.value("req_id").toString();
     if (!acceptsReqId(reqId)) return;
 
+    // 실구현(develop 브랜치)이 실제로 보내는 필드: req_id/ok/pcd/points/
+    // stm_reported/ts 뿐이다. session_id/scan_id/json/rows/columns/expected/
+    // duration_s 는 계약 §3.4에 있지만 아직 안 보낸다 — QJsonObject::value 가
+    // 없는 키에 기본값(빈 문자열/0)을 주므로 파싱 자체는 안전하다.
     ScanResult r;
-    r.reqId      = reqId;
-    r.ok         = o.value("ok").toBool();
-    r.sessionId  = o.value("session_id").toString();
-    r.scanId     = o.value("scan_id").toString();
-    r.pcdPath    = o.value("pcd").toString();
-    r.jsonPath   = o.value("json").toString();
-    r.rows       = o.value("rows").toInt();
-    r.columns    = o.value("columns").toInt();
-    r.points     = o.value("points").toVariant().toUInt();
-    r.expected   = o.value("expected").toVariant().toUInt();
-    r.durationS  = o.value("duration_s").toDouble();
+    r.reqId       = reqId;
+    r.ok          = o.value("ok").toBool();
+    r.sessionId   = o.value("session_id").toString();
+    r.scanId      = o.value("scan_id").toString();
+    r.pcdPath     = o.value("pcd").toString();
+    r.jsonPath    = o.value("json").toString();
+    r.rows        = o.value("rows").toInt();
+    r.columns     = o.value("columns").toInt();
+    r.points      = o.value("points").toVariant().toUInt();
+    r.expected    = o.value("expected").toVariant().toUInt();
+    r.stmReported = o.value("stm_reported").toVariant().toUInt();
+    r.durationS   = o.value("duration_s").toDouble();
     r.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
     emit scanResultUpdated(r);
 }

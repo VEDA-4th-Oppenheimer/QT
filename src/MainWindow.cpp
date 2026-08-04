@@ -102,8 +102,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         connect(src, &DataBridge::scanResultUpdated, this, [this](const ScanResult &r) {
             m_topView->setScanResult(r);
             m_calibTab->setScanResult(r);
-            appendLog("EXPORT", QString("state/scan — %1 (%2점, %3s)")
-                                     .arg(r.pcdPath).arg(r.points).arg(r.durationS, 0, 'f', 1));
+            // durationS 는 실구현(develop 브랜치)이 아직 안 보낸다 — 있을 때만 붙인다.
+            QString msg = QString("state/scan — %1 (%2점)").arg(r.pcdPath).arg(r.points);
+            if (r.durationS > 0.0) msg += QString(", %1s").arg(r.durationS, 0, 'f', 1);
+            appendLog("EXPORT", msg);
         });
         connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
             appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));

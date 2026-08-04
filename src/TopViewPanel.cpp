@@ -164,7 +164,8 @@ void TopViewPanel::setScanProgress(const ScanProgress &p) {
 }
 
 void TopViewPanel::setScanResult(const ScanResult &r) {
+    // state/scan(develop 브랜치 실구현)은 expected 를 안 보낸다 — event/progress
+    // 에서 마지막으로 받은 값을 그대로 둔다(덮어써서 0으로 리셋하지 않는다).
     m_coverage->setText(QStringLiteral("SCAN PROGRESS 100%"));
     m_scanPts->setText(QLocale().toString(r.points));
-    m_expected->setText(QLocale().toString(r.expected));
 }
