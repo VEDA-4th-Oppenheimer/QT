@@ -14,6 +14,7 @@ namespace {
 constexpr int kQosCmd = 1;
 constexpr int kQosBestEffort = 0;
 constexpr int kKeepAliveSec = 30;
+constexpr int kReconnectRetryMs = 5000;   // 최초 접속 실패 시 재시도 주기
 
 // kit_id 세그먼트 없음 — RPi develop 브랜치 실구현 기준(Models.h 상단 주석 참고).
 constexpr char kTopicCmdScan[]       = "adts/cmd/scan";
@@ -32,7 +33,14 @@ QDateTime tsFromUnixSeconds(qint64 secs) {
 }
 }
 
-MqttBridge::MqttBridge(QObject *parent) : DataBridge(parent) {}
+MqttBridge::MqttBridge(QObject *parent) : DataBridge(parent) {
+    m_retryTimer.setInterval(kReconnectRetryMs);
+    connect(&m_retryTimer, &QTimer::timeout, this, [this] {
+        if (!m_wantConnected) { m_retryTimer.stop(); return; }
+        if (m_client && m_client->is_connected()) { m_retryTimer.stop(); return; }
+        attemptConnect();
+    });
+}
 
 MqttBridge::~MqttBridge() { disconnectFromBroker(); }
 
@@ -83,16 +91,33 @@ void MqttBridge::connectToBroker(const QString &host, quint16 port, const QStrin
                                       "(계약 §6 인증서 배치 전 로컬 개발용)").arg(certDir, host).arg(port));
     }
 
+    m_connOpts = opts;
+    m_wantConnected = true;
+    m_loggedFailure = false;
+    attemptConnect();
+    m_retryTimer.start();   // 붙을 때까지 주기적으로 재시도(붙으면 스스로 멈춘다)
+}
+
+void MqttBridge::attemptConnect() {
+    if (!m_client || m_client->is_connected()) return;
     try {
-        m_client->connect(opts);
+        m_client->connect(m_connOpts);
     } catch (const mqtt::exception &exc) {
-        qWarning() << "MQTT connect failed:" << exc.what();
+        // 접속 시도가 이미 진행 중이어도 여기로 온다 — 재시도 타이머가 계속
+        // 돌고 있으므로 조용히 넘긴다. 로그는 첫 실패 때만 남긴다.
         emit brokerStateChanged(false);
-        emit logLine("MQTT", QString("연결 실패: %1").arg(exc.what()));
+        if (!m_loggedFailure) {
+            m_loggedFailure = true;
+            qWarning() << "MQTT connect failed:" << exc.what();
+            emit logLine("MQTT", QString("연결 실패: %1 — %2초마다 재시도")
+                                      .arg(exc.what()).arg(kReconnectRetryMs / 1000));
+        }
     }
 }
 
 void MqttBridge::disconnectFromBroker() {
+    m_wantConnected = false;   // 의도적 종료 — 재시도 타이머가 다시 붙이지 않게
+    m_retryTimer.stop();
     if (!m_client || !m_client->is_connected()) return;
     try {
         m_client->disconnect()->wait();
@@ -180,6 +205,8 @@ void MqttBridge::subscribeAll() {
 }
 
 void MqttBridge::connected(const std::string & /*cause*/) {
+    m_retryTimer.stop();       // 붙었으니 재시도 중단 (이후 끊김은 Paho 자동 재접속이 담당)
+    m_loggedFailure = false;
     emit brokerStateChanged(true);
     subscribeAll();
     emit logLine("MQTT", QString("broker connected (%1:%2), state/#·event/# 구독").arg(m_host).arg(m_port));
