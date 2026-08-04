@@ -21,9 +21,9 @@ const char *kSteps[4][2] = {
 QLabel *statRow(QWidget *parent, QVBoxLayout *into, const QString &label) {
     auto *row = new QHBoxLayout;
     auto *k = new QLabel(label, parent);
-    k->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
+    k->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextFaint.name()));
     auto *v = new QLabel(parent);
-    v->setStyleSheet(Theme::mono(11) + "color:#c7d1da;");
+    v->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(Theme::Text3.name()));
     row->addWidget(k);
     row->addStretch(1);
     row->addWidget(v);
@@ -42,9 +42,9 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     left->setSpacing(7);
 
     auto *pipeHead = new QLabel("SCAN SESSION", this);
-    pipeHead->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    pipeHead->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     auto *pipeSub = new QLabel(QString::fromUtf8("MQTT_INTERFACE_CONTRACT.md §5 상태 흐름"), this);
-    pipeSub->setStyleSheet("color:#8e9aa5;font-size:11px;");
+    pipeSub->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextDim.name()));
     left->addWidget(pipeHead);
     left->addWidget(pipeSub);
     left->addSpacing(4);
@@ -62,12 +62,12 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
 
         auto *id = new QLabel(kSteps[i][0], row);
         id->setFixedWidth(120);
-        id->setStyleSheet(Theme::mono(11, 500) + "color:#dbe2e8;");
+        id->setStyleSheet(Theme::mono(11, 500) + QString("color:%1;").arg(Theme::Text2.name()));
         auto *desc = new QLabel(kSteps[i][1], row);
-        desc->setStyleSheet("color:#8e9aa5;");
+        desc->setStyleSheet(QString("color:%1;").arg(Theme::TextDim.name()));
 
         m_stepState[i] = new QLabel("—", row);
-        m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#5f6c78;");
+        m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;").arg(Theme::TextFaint.name()));
 
         rl->addWidget(m_stepBadge[i]);
         rl->addWidget(id);
@@ -77,7 +77,7 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     }
 
     auto *logHead = new QLabel("SESSION LOG", this);
-    logHead->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;margin-top:6px;");
+    logHead->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;margin-top:6px;").arg(Theme::Accent.name()));
     left->addWidget(logHead);
     m_log = new QPlainTextEdit(this);
     m_log->setReadOnly(true);
@@ -93,16 +93,17 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     pl->setContentsMargins(11, 10, 11, 10);
     pl->setSpacing(6);
     auto *pTitle = new QLabel("PROGRESS", progPanel);
-    pTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    pTitle->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     m_stateValue = new QLabel("OFFLINE", progPanel);
-    m_stateValue->setStyleSheet(Theme::mono(24, 700) + "color:#5f6c78;");
+    m_stateValue->setStyleSheet(Theme::mono(24, 700) + QString("color:%1;").arg(Theme::TextFaint.name()));
     m_progressBar = new QProgressBar(progPanel);
     m_progressBar->setRange(0, 100);
     m_progressBar->setTextVisible(false);
     m_progressBar->setFixedHeight(5);
     m_progressBar->setStyleSheet(
-        "QProgressBar{background:#161d23;border:none;border-radius:2px;}"
-        "QProgressBar::chunk{background:#3fbfcc;border-radius:2px;}");
+        QString("QProgressBar{background:%1;border:none;border-radius:2px;}"
+                "QProgressBar::chunk{background:%2;border-radius:2px;}")
+            .arg(Theme::BorderRow.name(), Theme::Accent.name()));
     pl->addWidget(pTitle);
     pl->addWidget(m_stateValue);
     pl->addWidget(m_progressBar);
@@ -119,7 +120,7 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     rl2->setContentsMargins(11, 10, 11, 10);
     rl2->setSpacing(6);
     auto *rTitle = new QLabel("LAST SCAN RESULT  (state/scan)", resultPanel);
-    rTitle->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    rTitle->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     rl2->addWidget(rTitle);
     auto *resultStats = new QVBoxLayout;
     resultStats->setSpacing(4);
@@ -171,19 +172,22 @@ void CalibrationTab::setDaemonState(const DaemonState &s) {
     for (int i = 0; i < 4; ++i) {
         if (i == active) {
             m_stepBadge[i]->setText(QString::fromUtf8("●"));
-            m_stepBadge[i]->setStyleSheet("border-radius:3px;background:#152229;color:#8fd9e2;" + Theme::mono(10, 700));
+            m_stepBadge[i]->setStyleSheet(QString("border-radius:3px;background:%1;color:%2;")
+                .arg(Theme::AccentBg.name(), Theme::AccentBright.name()) + Theme::mono(10, 700));
             m_stepState[i]->setText("ACTIVE");
-            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#8fd9e2;");
+            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;").arg(Theme::AccentBright.name()));
         } else if (active >= 0 && i < active) {
             m_stepBadge[i]->setText(QString::fromUtf8("✓"));
-            m_stepBadge[i]->setStyleSheet("border-radius:3px;background:#16241d;color:#6fdcab;" + Theme::mono(10, 700));
+            m_stepBadge[i]->setStyleSheet(QString("border-radius:3px;background:%1;color:%2;")
+                .arg(Theme::OkBg.name(), Theme::OkBright.name()) + Theme::mono(10, 700));
             m_stepState[i]->setText("DONE");
-            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#6fdcab;");
+            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;").arg(Theme::OkBright.name()));
         } else {
             m_stepBadge[i]->setText("");
-            m_stepBadge[i]->setStyleSheet("border-radius:3px;background:#161d23;border:1px solid #222c34;");
+            m_stepBadge[i]->setStyleSheet(QString("border-radius:3px;background:%1;border:1px solid %2;")
+                .arg(Theme::BorderRow.name(), Theme::Border.name()));
             m_stepState[i]->setText("—");
-            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + "color:#5f6c78;");
+            m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;").arg(Theme::TextFaint.name()));
         }
     }
 }

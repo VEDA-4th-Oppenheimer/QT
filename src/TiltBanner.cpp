@@ -5,7 +5,8 @@
 #include <QPushButton>
 
 TiltBanner::TiltBanner(QWidget *parent) : QFrame(parent) {
-    setStyleSheet("background:#2a1210;border-bottom:1px solid #4a1f1a;");
+    setStyleSheet(QString("background:%1;border-bottom:1px solid %2;")
+        .arg(Theme::DangerBg.name(), Theme::DangerBorder.name()));
     setFixedHeight(38);
 
     auto *l = new QHBoxLayout(this);
@@ -15,16 +16,18 @@ TiltBanner::TiltBanner(QWidget *parent) : QFrame(parent) {
     auto *mark = new QLabel("!", this);
     mark->setFixedSize(20, 20);
     mark->setAlignment(Qt::AlignCenter);
-    mark->setStyleSheet("background:#e0574a;color:#2a1210;border-radius:3px;" + Theme::mono(13, 700));
+    mark->setStyleSheet(QString("background:%1;color:%2;border-radius:3px;")
+        .arg(Theme::Danger.name(), Theme::DangerBg.name()) + Theme::mono(13, 700));
 
     auto *title = new QLabel(QString::fromUtf8("TILT DETECTED — 킷이 수평이 아닙니다"), this);
-    title->setStyleSheet(Theme::mono(12, 700) + "color:#ff8175;letter-spacing:1px;");
+    title->setStyleSheet(Theme::mono(12, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::DangerText.name()));
 
     m_detail = new QLabel(this);
-    m_detail->setStyleSheet("color:#d9a9a3;font-size:12px;");
+    m_detail->setStyleSheet(QString("color:%1;font-size:12px;").arg(Theme::DangerTextDim.name()));
 
     auto *dismiss = new QPushButton("DISMISS", this);
-    dismiss->setStyleSheet("background:transparent;border:1px solid #6b2f28;color:#e09b93;min-height:26px;");
+    dismiss->setStyleSheet(QString("background:transparent;border:1px solid %1;color:%2;min-height:26px;")
+        .arg(Theme::DangerBorder.name(), Theme::DangerText.name()));
     connect(dismiss, &QPushButton::clicked, this, &QWidget::hide);
 
     l->addWidget(mark);

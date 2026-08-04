@@ -5,7 +5,8 @@
 
 StatusBar::StatusBar(QWidget *parent) : QFrame(parent) {
     setFixedHeight(26);
-    setStyleSheet("background:#0e1317;border:none;border-top:1px solid #212a32;");
+    setStyleSheet(QString("background:%1;border:none;border-top:1px solid %2;")
+        .arg(Theme::BarBg.name(), Theme::Border.name()));
 
     auto *l = new QHBoxLayout(this);
     l->setContentsMargins(14, 0, 14, 0);
@@ -13,7 +14,7 @@ StatusBar::StatusBar(QWidget *parent) : QFrame(parent) {
 
     auto mk = [this](const QString &text) {
         auto *lb = new QLabel(text, this);
-        lb->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
+        lb->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextFaint.name()));
         return lb;
     };
 
@@ -28,10 +29,11 @@ StatusBar::StatusBar(QWidget *parent) : QFrame(parent) {
 void StatusBar::setDaemonState(const DaemonState &s) {
     m_state->setText(QString("KIT %1").arg(s.state));
     const QString color =
-        (s.state == "IDLE" || s.state == "SCANNING") ? "#6fdcab" :
-        (s.state == "DISARM" || s.state == "OFFLINE") ? "#ff9a92" : "#e2a33c";
+        (s.state == "IDLE" || s.state == "SCANNING") ? Theme::OkBright.name() :
+        (s.state == "DISARM" || s.state == "OFFLINE") ? Theme::DangerText.name() : Theme::Warn.name();
     m_state->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(color));
 
     m_link->setText(QString("STM32 link %1").arg(s.linkAlive ? "OK" : "DOWN"));
-    m_link->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(s.linkAlive ? "#5f6c78" : "#ff9a92"));
+    m_link->setStyleSheet(Theme::mono(10) + QString("color:%1;")
+        .arg((s.linkAlive ? Theme::TextFaint : Theme::DangerText).name()));
 }

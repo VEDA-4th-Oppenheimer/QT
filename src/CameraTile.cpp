@@ -25,8 +25,8 @@ protected:
             return;
         }
         // 스트림 없음: 시안의 45° 스트라이프 플레이스홀더
-        p.fillRect(rect(), QColor("#0f1418"));
-        p.setPen(QPen(QColor("#12171b"), 9));
+        p.fillRect(rect(), Theme::Panel);
+        p.setPen(QPen(Theme::PanelHead, 9));
         for (int x = -height(); x < width(); x += 18)
             p.drawLine(x, height(), x + height(), 0);
 
@@ -65,9 +65,9 @@ CameraTile::CameraTile(const ChannelState &state, QWidget *parent)
     hl->setSpacing(9);
 
     auto *no = new QLabel(QString("CH%1").arg(state.no), head);
-    no->setStyleSheet(Theme::mono(10, 700) + "color:#5f6c78;letter-spacing:1px;");
+    no->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::TextFaint.name()));
     m_name = new QLabel(state.name, head);
-    m_name->setStyleSheet("font-size:12px;color:#dbe2e8;");
+    m_name->setStyleSheet(QString("font-size:12px;color:%1;").arg(Theme::Text2.name()));
     m_name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_status = new QLabel(head);
 

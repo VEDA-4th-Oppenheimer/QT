@@ -31,7 +31,7 @@ void TopViewWidget::paintEvent(QPaintEvent *) {
     const QPointF origin = toPx(QPointF(0, 0));
 
     // 1 m 격자
-    p.setPen(QPen(QColor("#151d23"), 1));
+    p.setPen(QPen(Theme::Grid, 1));
     for (double x = -m_roomW / 2; x <= m_roomW / 2 + 0.01; x += 1.0) {
         p.drawLine(toPx({x, -m_roomD / 2}), toPx({x, m_roomD / 2}));
     }
@@ -55,11 +55,11 @@ void TopViewWidget::paintEvent(QPaintEvent *) {
         wedge.closeSubpath();
         QColor c = Theme::Accent; c.setAlphaF(alpha[i]);
         p.fillPath(wedge, c);
-        p.setPen(QPen(QColor("#2a5f68"), 1, Qt::DashLine));
+        p.setPen(QPen(Theme::ScanHighlight, 1, Qt::DashLine));
         p.drawLine(origin, corners[i]);
 
         const QPointF mid = (corners[i] + corners[(i + 1) % 4]) / 2.0;
-        p.setPen(QColor("#3d6470"));
+        p.setPen(Theme::ScanHighlight);
         p.drawText(QRectF(mid.x() - 40, mid.y() - 7, 80, 14), Qt::AlignCenter, fovLabel[i]);
     }
 

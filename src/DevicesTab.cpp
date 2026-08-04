@@ -25,21 +25,21 @@ QFrame *deviceCard(QWidget *parent, const QString &name, const QString &desc,
 
     auto *top = new QHBoxLayout;
     *dot = new QLabel(QChar(0x25CF), card);
-    (*dot)->setStyleSheet("color:#4bbd85;font-size:8px;");
+    (*dot)->setStyleSheet(QString("color:%1;font-size:8px;").arg(Theme::Ok.name()));
     auto *nameLabel = new QLabel(name, card);
-    nameLabel->setStyleSheet(Theme::mono(11, 700) + "color:#dbe2e8;");
+    nameLabel->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;").arg(Theme::Text2.name()));
     top->addWidget(*dot);
     top->addWidget(nameLabel);
     top->addStretch(1);
     l->addLayout(top);
 
     auto *descLabel = new QLabel(desc, card);
-    descLabel->setStyleSheet("color:#7b8792;font-size:11px;");
+    descLabel->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextMuted.name()));
     descLabel->setWordWrap(true);
     l->addWidget(descLabel);
 
     *value = new QLabel(card);
-    (*value)->setStyleSheet(Theme::mono(12) + "color:#c7d1da;");
+    (*value)->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(Theme::Text3.name()));
     l->addWidget(*value);
     return card;
 }
@@ -67,9 +67,9 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
 
     auto *tableHead = new QHBoxLayout;
     auto *th = new QLabel("MQTT TOPICS", this);
-    th->setStyleSheet(Theme::mono(11, 700) + "color:#3fbfcc;letter-spacing:1px;");
+    th->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     auto *qos = new QLabel(QString::fromUtf8("QoS 1 · keepalive 30 s"), this);
-    qos->setStyleSheet(Theme::mono(10) + "color:#5f6c78;");
+    qos->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextFaint.name()));
     tableHead->addWidget(th);
     tableHead->addStretch(1);
     tableHead->addWidget(qos);
@@ -121,17 +121,17 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
 
 void DevicesTab::setImu(const ImuState &imu) {
     if (!imu.valid) {
-        m_mpuDot->setStyleSheet("color:#5f6c78;font-size:8px;");
+        m_mpuDot->setStyleSheet(QString("color:%1;font-size:8px;").arg(Theme::TextFaint.name()));
         m_mpuValue->setText("N/A · 미구현");
-        m_mpuValue->setStyleSheet(Theme::mono(12) + "color:#5f6c78;");
+        m_mpuValue->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(Theme::TextFaint.name()));
         return;
     }
     const bool level = imu.level();
-    m_mpuDot->setStyleSheet(QString("color:%1;font-size:8px;").arg(level ? "#4bbd85" : "#e2a33c"));
+    m_mpuDot->setStyleSheet(QString("color:%1;font-size:8px;").arg((level ? Theme::Ok : Theme::Warn).name()));
     m_mpuValue->setText(level
         ? QString("LEVEL · R %1° / P %2°").arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1)
         : QString("TILT · R %1° / P %2°").arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1));
-    m_mpuValue->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(level ? "#6fdcab" : "#ff8175"));
+    m_mpuValue->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg((level ? Theme::OkBright : Theme::DangerText).name()));
 }
 
 void DevicesTab::setScanProgress(const ScanProgress &p) {
