@@ -21,7 +21,18 @@ protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         if (!frame.isNull()) {
-            p.drawImage(rect(), frame.scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            // 예전 코드는 frame.scaled(size(), KeepAspectRatio, Smooth) 로 프레임마다
+            // 전체 크기 QImage 를 새로 할당한 뒤, 그걸 다시 drawImage(rect(), ...) 로
+            // 늘려 그렸다. 스케일을 두 번 하는 데다(4채널 × 초당 수십 프레임이라
+            // 부담이 크다) KeepAspectRatio 로 맞춰둔 결과를 rect() 에 늘려버려
+            // 종횡비가 도로 깨지는 문제까지 있었다.
+            // 여기서는 종횡비를 지킨 목적 사각형을 직접 구해 한 번에 그린다 —
+            // 중간 QImage 할당이 사라지고 스케일도 1회로 줄어든다.
+            QRect target(QPoint(0, 0), frame.size().scaled(size(), Qt::KeepAspectRatio));
+            target.moveCenter(rect().center());
+            if (target != rect()) p.fillRect(rect(), Theme::Panel);   // 레터박스 여백
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+            p.drawImage(target, frame);
             return;
         }
         // 스트림 없음: 시안의 45° 스트라이프 플레이스홀더
@@ -87,7 +98,12 @@ CameraTile::CameraTile(const ChannelState &state, QWidget *parent)
     vl->addWidget(view, 1);
 
     auto *clock = new QTimer(this);
-    connect(clock, &QTimer::timeout, this, [this] { m_view->update(); });
+    connect(clock, &QTimer::timeout, this, [this] {
+        // 이 타이머는 플레이스홀더의 시계/fps 표시를 갱신하려고 있는 것이다.
+        // 영상이 들어오는 동안에는 setFrame() 이 프레임마다 update() 를 부르고
+        // 시계도 그려지지 않으므로, 여기서 또 다시 그리면 스케일 연산만 낭비된다.
+        if (static_cast<VideoView *>(m_view)->frame.isNull()) m_view->update();
+    });
     clock->start(1000);
 
     setOnline(state.online);
