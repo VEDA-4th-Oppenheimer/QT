@@ -2,6 +2,7 @@
 #include <QByteArray>
 #include <QString>
 #include <QJsonObject>
+#include <QTimer>
 #include <memory>
 #include <mqtt/async_client.h>
 #include "DataBridge.h"
@@ -54,6 +55,7 @@ private:
     void subscribeAll();
     void publishCommand(const QString &topic, const QJsonObject &fields);
     QString newReqId();
+    void attemptConnect();   // 최초 접속 실패 시 재시도용 (아래 m_retryTimer 참고)
 
     // GUI 스레드에서 안전하게 실행되는 실제 파싱 처리부
     void onRawMessage(const QString &topic, const QByteArray &payload);
@@ -67,4 +69,14 @@ private:
     QString  m_host;
     quint16  m_port = 1883;
     QString  m_lastReqId;   // 가장 최근에 Qt 가 발행한 req_id
+
+    // Paho 의 set_automatic_reconnect(true) 는 "한 번 붙었다가 끊긴" 경우만
+    // 다시 붙여준다. 최초 connect() 자체가 실패하면(앱을 먼저 켜고 RPi 를
+    // 나중에 켠 경우) 재시도도 없고 connection_lost() 콜백도 안 온다 —
+    // 그래서 브로커가 나중에 올라와도 영원히 미연결로 남았다. 아래 타이머가
+    // 연결될 때까지 주기적으로 다시 시도한다.
+    QTimer   m_retryTimer;
+    mqtt::connect_options m_connOpts;
+    bool     m_wantConnected = false;
+    bool     m_loggedFailure = false;   // 재시도 로그 도배 방지
 };
