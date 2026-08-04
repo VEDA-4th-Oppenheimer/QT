@@ -8,7 +8,9 @@
 // MainWindow 및 각 탭은 이 시그널 표면만 알면 되고, 실제로 어느 쪽이 연결되어 있는지는
 // 신경 쓰지 않는다.
 //
-// 명령/상태 신호는 MQTT_INTERFACE_CONTRACT.md v1.0 (adts/kit1/... 토픽) 을 그대로 따른다.
+// 명령/상태 신호는 MQTT_INTERFACE_CONTRACT.md v1.0 을 기준으로 하되, 토픽은
+// RPi develop 브랜치 실구현대로 kit_id 세그먼트 없는 "adts/..." 를 쓴다
+// (Models.h 상단 주석 참고).
 class DataBridge : public QObject {
     Q_OBJECT
 public:

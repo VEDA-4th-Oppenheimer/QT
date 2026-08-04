@@ -106,6 +106,7 @@ void DemoBridge::runScanScript() {
         r.jsonPath  = QStringLiteral("./scans/%1_%2_pan_tilt_lidar.json").arg(r.sessionId, r.scanId);
         r.rows = 180; r.columns = 100;
         r.points = 18000; r.expected = 18000;
+        r.stmReported = 18000;
         r.durationS = 4.2;
         r.ts = QDateTime::currentDateTime();
         emit scanResultUpdated(r);

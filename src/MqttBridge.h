@@ -7,14 +7,18 @@
 #include "DataBridge.h"
 
 // MQTT 브로커 <-> Qt UI 브리지 (Eclipse Paho MQTT C++).
-// 계약: docs 없이도 여기 주석만으로 알 수 있게 — MQTT_INTERFACE_CONTRACT.md v1.0
-// (RPi 저장소 docs/, 데몬=이현우 / Qt=송영빈 / 브로커·인증서=이광진 서명)을 그대로 구현한다.
+// 계약: MQTT_INTERFACE_CONTRACT.md v1.0 문서 기준이되, 실제로는 RPi 저장소
+// develop 브랜치의 진짜 구현(daemon/modules/mqtt/mqtt_module.c, 이현우)에 맞췄다.
+// 문서와 실구현이 갈리는 지점(토픽에 kit_id 없음, state/scan 필드 축소)은
+// Models.h 상단 주석 참고 — 재확정되면 이 파일과 함께 고칠 것.
 //
-//   토픽(전부 adts/kit1/... 접두): cmd/{scan,stop,home,disarm} 발행,
+//   토픽(전부 adts/... 접두, kit_id 세그먼트 없음): cmd/{scan,stop,home,disarm} 발행,
 //                                  state/{daemon,scan}, event/{progress,error} 구독.
-//   포트 8883 + mTLS(클라이언트 인증서). 인증서가 아직 없으면(§6, 발급 전) tcp:// 평문
-//   1883 으로 degraded 접속 — 로컬 개발/데모용. 실제 인증서가 배치되면 자동으로 ssl:// 를 쓴다.
+//   포트 8883 + mTLS(클라이언트 인증서, TLS 1.2 — 데몬 쪽과 동일하게 고정).
+//   인증서가 아직 없으면(§6, 발급 전) tcp:// 평문 1883 으로 degraded 접속 — 로컬
+//   개발/데모용. 실제 인증서가 배치되면 자동으로 ssl:// 를 쓴다.
 //   Client ID 는 계약서 §1 대로 고정 "qt-console" (중복 접속하면 서로 끊긴다).
+//   데몬 쪽 Client ID 는 "adts-daemon" — 서로 다르므로 충돌 없음.
 //
 // 영상은 이 브릿지가 아니라 RtspSource 가 카메라에서 RTSP 로 직접 받는다(MQTT 경로 아님).
 class MqttBridge : public DataBridge, public virtual mqtt::callback {

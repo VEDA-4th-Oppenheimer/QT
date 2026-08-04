@@ -123,11 +123,16 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     rl2->addWidget(rTitle);
     auto *resultStats = new QVBoxLayout;
     resultStats->setSpacing(4);
+    // 실구현(develop 브랜치)이 실제로 보내는 필드부터: ok/points/stm_reported/pcd.
+    m_okValue          = statRow(resultPanel, resultStats, "ok");
+    m_stmReportedValue = statRow(resultPanel, resultStats, "stm_reported");
+    m_pcdValue         = statRow(resultPanel, resultStats, "pcd");
+    // 계약 §3.4엔 있지만 실구현이 아직 안 보내는 필드 — 오면 채워지고, 안 오면
+    // setScanResult()가 "—"로 표시한다(0/빈 문자열을 실제 값처럼 보이지 않게).
     m_sessionValue  = statRow(resultPanel, resultStats, "session_id");
     m_scanIdValue   = statRow(resultPanel, resultStats, "scan_id");
     m_rowsColsValue = statRow(resultPanel, resultStats, "rows × columns");
     m_durationValue = statRow(resultPanel, resultStats, "duration_s");
-    m_pcdValue      = statRow(resultPanel, resultStats, "pcd");
     m_jsonValue     = statRow(resultPanel, resultStats, "json");
     rl2->addLayout(resultStats);
 
@@ -191,12 +196,20 @@ void CalibrationTab::setScanProgress(const ScanProgress &p) {
 
 void CalibrationTab::setScanResult(const ScanResult &r) {
     m_progressBar->setValue(100);
-    m_sessionValue->setText(r.sessionId);
-    m_scanIdValue->setText(r.scanId);
-    m_rowsColsValue->setText(QString("%1 × %2").arg(r.rows).arg(r.columns));
-    m_durationValue->setText(QString("%1 s").arg(r.durationS, 0, 'f', 1));
-    m_pcdValue->setText(r.pcdPath);
-    m_jsonValue->setText(r.jsonPath);
+
+    m_okValue->setText(r.ok ? "true" : "false");
+    m_okValue->setStyleSheet(Theme::mono(11) + QString("color:%1;")
+                                  .arg((r.ok ? Theme::Ok : Theme::DangerText).name()));
+    m_stmReportedValue->setText(r.stmReported > 0 ? QLocale().toString(r.stmReported) : "—");
+    m_pcdValue->setText(r.pcdPath.isEmpty() ? "—" : r.pcdPath);
+
+    // 계약엔 있지만 실구현이 아직 안 보내는 필드 — 기본값(빈 문자열/0)이면 "—".
+    m_sessionValue->setText(r.sessionId.isEmpty() ? "—" : r.sessionId);
+    m_scanIdValue->setText(r.scanId.isEmpty() ? "—" : r.scanId);
+    m_rowsColsValue->setText((r.rows > 0 && r.columns > 0)
+                                  ? QString("%1 × %2").arg(r.rows).arg(r.columns) : "—");
+    m_durationValue->setText(r.durationS > 0.0 ? QString("%1 s").arg(r.durationS, 0, 'f', 1) : "—");
+    m_jsonValue->setText(r.jsonPath.isEmpty() ? "—" : r.jsonPath);
 }
 
 void CalibrationTab::appendLog(const QString &tag, const QString &msg) {

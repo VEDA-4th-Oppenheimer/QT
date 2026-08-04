@@ -28,6 +28,7 @@ private:
     QLabel *m_stateValue;
     QProgressBar *m_progressBar;
     QLabel *m_pointsValue, *m_expectedValue;
-    QLabel *m_sessionValue, *m_scanIdValue, *m_pcdValue, *m_jsonValue;
+    QLabel *m_okValue, *m_pcdValue, *m_stmReportedValue;
+    QLabel *m_sessionValue, *m_scanIdValue, *m_jsonValue;
     QLabel *m_rowsColsValue, *m_durationValue;
 };
