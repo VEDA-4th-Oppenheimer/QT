@@ -287,6 +287,14 @@ void MainWindow::setDemoMode(bool demo) {
         host    = o.value("host").toString(host);
         port    = static_cast<quint16>(o.value("port").toInt(port));
         certDir = o.value("cert_dir").toString();
+        // cert_dir 은 보통 "certs" 같은 상대경로다. 그대로 넘기면 MqttBridge 가
+        // 프로세스 CWD 기준으로 찾는데, Finder 더블클릭이나 IDE 실행이면 CWD 가
+        // "/" 라 인증서를 못 찾는다. 그러면 평문 tcp:// 로 degraded 접속하고,
+        // 브로커 8883 은 TLS 전용이라 조용히 실패한다. mqtt.json 과 같은 방식으로
+        // 실행파일 위치 기준으로 해석해 CWD 와 무관하게 만든다.
+        if (!certDir.isEmpty()) {
+            certDir = resolveConfigPath(certDir);
+        }
     }
     m_mqtt->connectToBroker(host, port, certDir);
 }
