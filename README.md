@@ -118,6 +118,9 @@ cmake --build build
 ./build/spatial_vms.app/Contents/MacOS/spatial_vms   # macOS
 ```
 
+Windows 는 의존성 설치 방법이 달라 아래 [배포용 패키징 → Windows](#windows-빌드실행-검증-완료--패키징은-미검증)
+절의 vcpkg 절차를 따른다.
+
 개발 트리에서는 등록 마법사를 거치지 않고 **프로젝트 안의 설정 파일**을 그대로 쓴다.
 example 을 복사해 실제 값을 채운다 (둘 다 gitignore 대상 — 절대 커밋하지 말 것).
 
@@ -209,20 +212,53 @@ cmake -S . -B build && cmake --build build
 Homebrew가 전혀 없는 macOS에서 도 이 `.dmg`를 열어 `.app`을 `Applications`로
 드래그하면 바로 쓸 수 있다.
 
-### Windows (미검증 — 팀원 테스트 필요)
+### Windows (빌드·실행 검증 완료 / 패키징은 미검증)
 
-이 개발 환경은 macOS라 아래 절차를 실제로 빌드/실행해보지 못했다. **스크립트는
-구문 검사조차 하지 못했다**(이 장비에 PowerShell 없음). 팀원이 Windows 머신에서
-검증하고 결과를 알려주면 맞춘다.
+vcpkg + Visual Studio 2022(MSVC, x64) 조합으로 **빌드와 실행까지 확인**했다
+(2026-08-05). 아래 절차 그대로 하면 된다. 다만 `scripts/package_windows.ps1`
+(DLL 수집 + zip)은 아직 돌려보지 못했다.
+
+**1) vcpkg 설치 (1회)**
 
 ```powershell
-# vcpkg로 의존성 설치 (1회)
-vcpkg install qtbase[widgets] ffmpeg[avcodec,avformat,swscale] openssl --triplet x64-windows
-# paho-mqtt-cpp는 vcpkg에 없을 수 있어 소스 빌드 필요 (paho.mqtt.c 먼저, paho.mqtt.cpp 그 다음)
+git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat
+```
 
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<vcpkg>\scripts\buildsystems\vcpkg.cmake
+`vcpkg : '...' 용어가 cmdlet ... 으로 인식되지 않습니다` 는 vcpkg 가 PATH 에 없다는
+뜻이다. `C:\vcpkg\vcpkg.exe` 처럼 전체 경로로 부르거나 PATH 에 `C:\vcpkg` 를 넣는다.
+
+**2) 의존성 설치**
+
+```powershell
+C:\vcpkg\vcpkg.exe install qtbase[widgets] ffmpeg[avcodec,avformat,swscale] openssl paho-mqttcpp --triplet x64-windows
+```
+
+- Qt 도 **vcpkg 의 `qtbase`** 를 그대로 썼다 — 그래서 configure 에 `CMAKE_PREFIX_PATH`
+  가 필요 없다. 대신 qtbase 는 소스 빌드라 처음 한 번은 시간이 오래 걸린다. 공식 Qt
+  설치 관리자로 받은 Qt 를 쓰려면 configure 에
+  `-DCMAKE_PREFIX_PATH=C:\Qt\<버전>\msvc2022_64` 를 붙인다.
+- `pkg_check_modules(FFMPEG ...)` 는 Windows 에서도 그대로 통한다 — vcpkg 가 pkgconf 와
+  `.pc` 파일을 같이 깔아주기 때문에 pkg-config 를 따로 설치할 필요가 없다.
+
+**3) 빌드 · 실행**
+
+```powershell
+cmake -S . -B build -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
 cmake --build build --config Release
+.\build\Release\spatial_vms.exe
+```
 
+> Windows 에서는 `CMakeLists.txt` 가 `PAHO_MQTTPP_IMPORTS` 를 정의한다. paho-mqttpp3 를
+> **DLL 로 링크**할 때 헤더 심볼이 `__declspec(dllimport)` 로 선언되지 않으면
+> unresolved external symbol 로 링크가 깨진다. 반대로 static 트리플릿
+> (`x64-windows-static`)으로 바꾸면 이 정의를 빼야 한다.
+
+**4) 패키징 (아직 검증 못 함)**
+
+```powershell
 .\scripts\package_windows.ps1
 # DLL 을 자동으로 못 찾으면 경로를 직접 준다:
 .\scripts\package_windows.ps1 -ExtraDllDirs "C:\vcpkg\installed\x64-windows\bin"
@@ -313,7 +349,9 @@ scripts/
    `state/daemon` 하트비트·IMU 수신). 토픽은 계약서가 아닌 데몬 실구현 기준.
 2-1. **발급 서버(`/enroll`) 미구현** — 클라이언트는 위 계약대로 준비돼 있다.
    RPi 쪽 서비스가 뜨면 실제 발급까지 연결해 확인해야 한다. (담당: 송영빈)
-2-2. `scripts/package_windows.ps1` 미검증 — Windows 머신에서 1회 실행 필요.
+2-2. Windows 빌드·실행은 확인 완료(vcpkg + MSVC 2022). 남은 건
+   `scripts/package_windows.ps1` — 아직 한 번도 실행하지 못했다. Windows 머신에서
+   1회 돌려 zip 이 실제로 다른 PC 에서 뜨는지까지 봐야 한다.
 3. `cmd/home` — 데몬 쪽에 "스캔 없이 홈만" 트리거하는 API가 아직 없다(코어 담당
    이현우 협의 필요). Qt 는 이미 발행하지만 데몬이 무시한다.
 4. 카메라 단 캘리브 결과(NCC/edge_rmse/extrinsic) 표시 — 발행 토픽이 아직 없다
