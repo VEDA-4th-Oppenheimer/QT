@@ -1,5 +1,6 @@
 #include "EnrollDialog.h"
 #include "ConfigPath.h"
+#include "CameraConfig.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -55,11 +56,26 @@ EnrollDialog::EnrollDialog(QWidget *parent) : QDialog(parent) {
     m_device = new QLineEdit(this);
     m_device->setText(QSysInfo::machineHostName());   // 브로커 로그에서 누구 것인지 구분용
 
+    // 카메라는 RPi 와 물리적으로 떨어져 있고 데몬은 카메라를 건드리지 않는다.
+    // RTSP 는 이 앱이 카메라로 직접 연결하므로 여기서 같이 받는다.
+    m_camHost = new QLineEdit(this);
+    m_camHost->setPlaceholderText(QString::fromUtf8("예: 172.20.33.8 (비우면 서버 설정 사용)"));
+    m_camUser = new QLineEdit(this);
+    m_camUser->setPlaceholderText(QString::fromUtf8("예: admin"));
+    m_camPass = new QLineEdit(this);
+    m_camPass->setEchoMode(QLineEdit::Password);
+
     auto *form = new QFormLayout;
     form->addRow(QString::fromUtf8("발급 서버 주소"), m_host);
     form->addRow(QString::fromUtf8("포트"),           m_port);
     form->addRow(QString::fromUtf8("토큰"),           m_token);
     form->addRow(QString::fromUtf8("기기 이름"),       m_device);
+
+    auto *camLabel = new QLabel(QString::fromUtf8("<b>카메라 (CCTV)</b>"), this);
+    form->addRow(camLabel);
+    form->addRow(QString::fromUtf8("카메라 IP"),      m_camHost);
+    form->addRow(QString::fromUtf8("카메라 계정"),     m_camUser);
+    form->addRow(QString::fromUtf8("카메라 비밀번호"), m_camPass);
 
     m_status = new QLabel(this);
     m_status->setWordWrap(true);
@@ -92,6 +108,9 @@ void EnrollDialog::setBusy(bool busy) {
     m_port->setEnabled(!busy);
     m_token->setEnabled(!busy);
     m_device->setEnabled(!busy);
+    m_camHost->setEnabled(!busy);
+    m_camUser->setEnabled(!busy);
+    m_camPass->setEnabled(!busy);
 }
 
 void EnrollDialog::showError(const QString &msg) {
@@ -156,10 +175,15 @@ void EnrollDialog::handleReply(QNetworkReply *reply) {
     QString err;
     if (!installBundle(obj, &err)) { showError(err); return; }
 
+    const bool haveCam = !m_camHost->text().trimmed().isEmpty()
+                         || !obj.value(QStringLiteral("cameras")).toObject().isEmpty();
     QMessageBox::information(
         this, QString::fromUtf8("설정 완료"),
-        QString::fromUtf8("인증서와 카메라 설정을 받았습니다.\n\n발급된 이름: %1")
-            .arg(obj.value(QStringLiteral("cn")).toString(QStringLiteral("(없음)"))));
+        QString::fromUtf8("인증서를 받았습니다.\n\n발급된 이름: %1\n카메라: %2")
+            .arg(obj.value(QStringLiteral("cn")).toString(QStringLiteral("(없음)")),
+                 haveCam ? QString::fromUtf8("설정됨")
+                         : QString::fromUtf8("설정 없음 — 영상이 나오지 않습니다.\n"
+                                             "  메뉴의 '카메라 설정'에서 IP 를 입력하세요.")));
     accept();
 }
 
@@ -223,8 +247,22 @@ bool EnrollDialog::installBundle(const QJsonObject &o, QString *err) {
         return false;
     }
 
-    // 카메라 설정은 없어도 진행한다 — MQTT 는 되고 영상만 안 나오는 상태가 된다.
-    const QJsonObject cams = o.value(QStringLiteral("cameras")).toObject();
+    // 카메라: 사용자가 IP 를 입력했으면 그것이 이긴다.
+    //   카메라는 RPi 와 물리적으로 떨어져 있고 데몬은 카메라를 건드리지 않는다.
+    //   RTSP 는 이 앱이 카메라로 직접 연결하므로, 굳이 서버를 경유할 이유가 없다.
+    //   서버 응답의 cameras 는 입력을 비웠을 때만 폴백으로 쓴다.
+    QJsonObject cams;
+    const QString camHost = m_camHost->text().trimmed();
+    if (!camHost.isEmpty()) {
+        cams.insert(QStringLiteral("channels"),
+                    CameraConfig::buildChannels(camHost,
+                                                m_camUser->text().trimmed(),
+                                                m_camPass->text()));
+    } else {
+        cams = o.value(QStringLiteral("cameras")).toObject();
+    }
+
+    // 없어도 진행한다 — MQTT 는 되고 영상만 안 나오는 상태가 된다.
     if (!cams.isEmpty()) {
         if (!writeText(cfgDir + QStringLiteral("/cameras.json"),
                        QString::fromUtf8(QJsonDocument(cams).toJson(QJsonDocument::Indented)), true)) {

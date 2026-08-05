@@ -7,10 +7,13 @@ Hanwha Vision **PNM-C16083RVQ** 멀티센서 카메라 + **TOFSense-F2D** 1D LiD
 서명)을 그대로 구현한다.
 
 - **UI**: Qt6 Widgets, 다크 관제실 테마 (`src/Theme.h`)
-- **CCTV 영상**: RTSP 직접 연결(MQTT 경유 아님). `src/RtspDecoder`가 FFmpeg
-  (libavformat/avcodec/swscale)로 채널별 RTSP 스트림을 백그라운드 스레드에서
-  디코딩해 `CameraTile`에 공급한다 (`config/cameras.json`에 설정된 채널만 — 없으면
-  해당 채널은 Demo/Live 상태를 그대로 따른다).
+- **CCTV 영상**: RTSP 직접 연결(영상 자체는 MQTT 경유 아님). `src/RtspDecoder`가
+  FFmpeg(libavformat/avcodec/swscale)로 채널별 RTSP 스트림을 백그라운드 스레드에서
+  디코딩해 `CameraTile`에 공급한다.
+  **카메라 정보는 등록할 때 사용자가 입력한다.** 카메라는 RPi 와 물리적으로
+  떨어져 있고 데몬은 카메라를 건드리지 않으므로, 서버를 경유할 이유가 없다.
+  등록 후에는 `모드 → 카메라 설정…` 에서 바꾸면 **재시작 없이 즉시 적용**된다.
+  RTSP 는 이 앱이 카메라에 직접 연결하므로 RPi 를 경유하지 않는다.
 - **MQTT**: Eclipse Paho MQTT C++ (`src/MqttBridge`) — 스캔 제어/상태 전용
   (`adts/...` 토픽). 브로커는 **RPi 에 상주**(Mosquitto)하며 Qt·카메라 단·통합
   데몬이 모두 이 브로커의 클라이언트다. **포트 8883 + mTLS**. 인증서가 없으면
