@@ -29,9 +29,6 @@ constexpr char kTopicStateDaemon[]   = "adts/state/daemon";
 constexpr char kTopicStateScan[]     = "adts/state/scan";
 constexpr char kTopicEventProgress[] = "adts/event/progress";
 constexpr char kTopicEventError[]    = "adts/event/error";
-// 카메라 설정 배포. 데몬/관제 상태와 성격이 달라 state/event 와 분리했다.
-// retained 로 발행되므로 나중에 붙는 콘솔도 즉시 현재 값을 받는다.
-constexpr char kTopicConfigCameras[] = "adts/config/cameras";
 
 QDateTime tsFromUnixSeconds(qint64 secs) {
     return secs > 0 ? QDateTime::fromSecsSinceEpoch(secs) : QDateTime::currentDateTime();
@@ -215,7 +212,7 @@ void MqttBridge::requestRearm() {
 void MqttBridge::subscribeAll() {
     if (!m_client) return;
     // 계약 §2: Qt 가 구독할 것은 이 두 줄이면 끝.
-    for (const char *t : {kTopicStateWildcard, kTopicEventWildcard, kTopicConfigCameras}) {
+    for (const char *t : {kTopicStateWildcard, kTopicEventWildcard}) {
         try {
             m_client->subscribe(t, kQosCmd);
         } catch (const mqtt::exception &exc) {
@@ -259,7 +256,6 @@ void MqttBridge::onRawMessage(const QString &topic, const QByteArray &payload) {
     if (topic == kTopicStateScan)     { handleStateScan(payload);     return; }
     if (topic == kTopicEventProgress) { handleEventProgress(payload); return; }
     if (topic == kTopicEventError)    { handleEventError(payload);    return; }
-    if (topic == kTopicConfigCameras) { handleConfigCameras(payload);  return; }
 }
 
 void MqttBridge::handleStateDaemon(const QByteArray &payload) {
@@ -336,17 +332,4 @@ void MqttBridge::handleEventError(const QByteArray &payload) {
     e.fatal = o.value("fatal").toBool();
     e.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
     emit kitErrorReceived(e);
-}
-
-void MqttBridge::handleConfigCameras(const QByteArray &payload) {
-    // 페이로드는 config/cameras.json 과 같은 모양이다: {"channels":{"1":"rtsp://…"}}
-    // 관리자가 파일을 그대로 발행할 수 있게 형식을 맞췄다.
-    const QJsonObject root = QJsonDocument::fromJson(payload).object();
-    const QJsonObject channels = root.value(QStringLiteral("channels")).toObject();
-    if (channels.isEmpty()) {
-        emit logLine(QStringLiteral("RTSP"),
-                     QStringLiteral("브로커가 보낸 카메라 설정에 channels 가 없습니다"));
-        return;
-    }
-    emit cameraConfigReceived(channels);
 }

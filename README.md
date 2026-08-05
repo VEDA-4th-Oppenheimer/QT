@@ -13,8 +13,7 @@ Hanwha Vision **PNM-C16083RVQ** 멀티센서 카메라 + **TOFSense-F2D** 1D LiD
   **카메라 정보는 등록할 때 사용자가 입력한다.** 카메라는 RPi 와 물리적으로
   떨어져 있고 데몬은 카메라를 건드리지 않으므로, 서버를 경유할 이유가 없다.
   등록 후에는 `모드 → 카메라 설정…` 에서 바꾸면 **재시작 없이 즉시 적용**된다.
-  브로커가 `adts/config/cameras` 를 retained 로 발행하면 그것도 받아 적용한다 —
-  운영자가 중앙에서 관리하고 싶을 때를 위한 선택지이고, 필수는 아니다.
+  RTSP 는 이 앱이 카메라에 직접 연결하므로 RPi 를 경유하지 않는다.
 - **MQTT**: Eclipse Paho MQTT C++ (`src/MqttBridge`) — 스캔 제어/상태 전용
   (`adts/...` 토픽). 브로커는 **RPi 에 상주**(Mosquitto)하며 Qt·카메라 단·통합
   데몬이 모두 이 브로커의 클라이언트다. **포트 8883 + mTLS**. 인증서가 없으면
@@ -303,7 +302,6 @@ DISARM 만 상태와 무관하게 항상 활성(비상정지).
 | `adts/state/scan` | 구독 | 1 | 예 | 스캔 결과 — 파일 경로만(점 데이터 없음) |
 | `adts/event/progress` | 구독 | 0 | 아니오 | 진행률 ~2Hz, 유실 가정(완료 판정은 state 로) |
 | `adts/event/error` | 구독 | 1 | 아니오 | 오류 코드/메시지 |
-| `adts/config/cameras` | 구독 | 1 | **예** | 카메라 RTSP URL — `{"channels":{"1":"rtsp://…"}}`. RPi 에서 `broker/publish-config.sh` 로 발행 |
 
 접속이 안 될 때 브로커에서 직접 들여다보면 어느 구간이 끊겼는지 빨리 갈린다:
 

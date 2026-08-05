@@ -18,13 +18,8 @@ public:
     void loadConfigAndStart(const QString &path = QStringLiteral("config/cameras.json"));
 
 public slots:
-    // 브로커가 retained 로 내려주는 카메라 설정(adts/config/cameras)을 적용한다.
-    // 카메라는 사용자별 자산이 아니라 킷의 일부라, 관리자가 한 곳에서 바꾸면
-    // 접속 중인 콘솔 전부에 반영되는 편이 맞다. 등록 시점에 받은 파일은
-    // "브로커가 아직 안 붙었을 때"를 위한 초기값으로 남는다.
-    //
-    // retained 라 재접속할 때마다 같은 내용이 다시 온다. 그때마다 스트림을
-    // 끊고 다시 붙으면 화면이 깜빡이므로, 내용이 같으면 아무것도 하지 않는다.
+    // 카메라 설정을 적용한다(최초 로드, 그리고 '카메라 설정' 메뉴에서 변경 시).
+    // 같은 내용이면 아무것도 하지 않는다 — 돌고 있는 스트림을 괜히 끊지 않으려고.
     void applyChannels(const QJsonObject &channels, const QString &origin);
 
 signals:
