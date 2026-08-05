@@ -43,6 +43,9 @@ private:
     QSpinBox    *m_port   = nullptr;
     QLineEdit   *m_token  = nullptr;
     QLineEdit   *m_device = nullptr;
+    QLineEdit   *m_camHost = nullptr;
+    QLineEdit   *m_camUser = nullptr;
+    QLineEdit   *m_camPass = nullptr;
     QLabel      *m_status = nullptr;
     QPushButton *m_submit = nullptr;
 
