@@ -12,6 +12,7 @@
 #include "DemoBridge.h"
 #include "RtspSource.h"
 #include "EnrollDialog.h"
+#include "CameraConfig.h"
 #include "Theme.h"
 #include "ConfigPath.h"
 
@@ -27,6 +28,12 @@
 #include <QFile>
 #include <QDir>
 #include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QLabel>
+#include <QUrl>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -59,6 +66,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(demoAction, &QAction::toggled, this, &MainWindow::setDemoMode);
 
     modeMenu->addSeparator();
+    auto *camAction = modeMenu->addAction(QString::fromUtf8("카메라 설정…"));
+    connect(camAction, &QAction::triggered, this, &MainWindow::editCameraSettings);
+
     auto *logoutAction = modeMenu->addAction(QString::fromUtf8("로그아웃 (인증서·설정 삭제)"));
     connect(logoutAction, &QAction::triggered, this, &MainWindow::logout);
 
@@ -295,6 +305,84 @@ bool MainWindow::ensureConfigured() {
     // 받아오므로, 사용자는 토큰만 입력하면 둘 다 붙는다.
     EnrollDialog dlg(this);
     return (dlg.exec() == QDialog::Accepted) && configReady();
+}
+
+void MainWindow::editCameraSettings() {
+    // 현재 값에서 IP·계정을 뽑아 기본값으로 채운다(비밀번호는 되읽지 않는다).
+    QString curHost, curUser;
+    QFile f(resolveConfigPath(QStringLiteral("config/cameras.json")));
+    if (f.open(QIODevice::ReadOnly)) {
+        const auto ch = QJsonDocument::fromJson(f.readAll()).object()
+                            .value(QStringLiteral("channels")).toObject();
+        if (!ch.isEmpty()) {
+            const QUrl u(ch.begin().value().toString());
+            curHost = u.host();
+            curUser = u.userName();
+        }
+    }
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QString::fromUtf8("카메라 설정"));
+    auto *host = new QLineEdit(curHost, &dlg);
+    host->setPlaceholderText(QString::fromUtf8("예: 172.20.33.8"));
+    auto *user = new QLineEdit(curUser, &dlg);
+    auto *pass = new QLineEdit(&dlg);
+    pass->setEchoMode(QLineEdit::Password);
+    pass->setPlaceholderText(QString::fromUtf8("비워두면 기존 비밀번호 유지"));
+
+    auto *form = new QFormLayout;
+    form->addRow(QString::fromUtf8("카메라 IP"),      host);
+    form->addRow(QString::fromUtf8("계정"),           user);
+    form->addRow(QString::fromUtf8("비밀번호"),        pass);
+
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    auto *lay = new QVBoxLayout(&dlg);
+    lay->addWidget(new QLabel(QString::fromUtf8(
+        "CCTV 는 이 앱이 카메라에 직접 연결합니다(RPi 경유 아님).\n"
+        "4개 채널은 같은 카메라의 센서 0~3 번입니다."), &dlg));
+    lay->addLayout(form);
+    lay->addWidget(box);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (host->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, QString::fromUtf8("카메라 설정"),
+                             QString::fromUtf8("카메라 IP 를 입력하세요."));
+        return;
+    }
+
+    // 비밀번호를 비웠으면 기존 URL 의 것을 그대로 쓴다.
+    QString pw = pass->text();
+    if (pw.isEmpty() && f.isOpen()) {
+        f.seek(0);
+        const auto ch = QJsonDocument::fromJson(f.readAll()).object()
+                            .value(QStringLiteral("channels")).toObject();
+        if (!ch.isEmpty()) pw = QUrl(ch.begin().value().toString()).password();
+    }
+
+    QJsonObject cams;
+    cams.insert(QStringLiteral("channels"),
+                CameraConfig::buildChannels(host->text(), user->text().trimmed(), pw));
+
+    const QString dir = userDataRoot() + QStringLiteral("/config");
+    QDir().mkpath(dir);
+    QFile out(dir + QStringLiteral("/cameras.json"));
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::critical(this, QString::fromUtf8("카메라 설정"),
+                              QString::fromUtf8("설정을 저장하지 못했습니다:\n%1").arg(out.fileName()));
+        return;
+    }
+    out.write(QJsonDocument(cams).toJson(QJsonDocument::Indented));
+    out.close();
+#ifndef Q_OS_WIN
+    QFile::setPermissions(out.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+#endif
+
+    // 재시작 없이 바로 적용한다.
+    m_video->applyChannels(cams.value(QStringLiteral("channels")).toObject(),
+                           QString::fromUtf8("카메라 설정"));
 }
 
 void MainWindow::logout() {
