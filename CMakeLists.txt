@@ -82,6 +82,12 @@ set_target_properties(spatial_vms PROPERTIES
 
 target_include_directories(spatial_vms PRIVATE src)
 
+if(WIN32)
+    # paho-mqttpp3 DLL을 링크할 때 헤더의 심볼을 __declspec(dllimport)로 선언해야
+    # 링크 에러(unresolved external symbol)가 안 난다.
+    target_compile_definitions(spatial_vms PRIVATE PAHO_MQTTPP_IMPORTS)
+endif()
+
 target_link_libraries(spatial_vms PRIVATE
     Qt6::Widgets
     Qt6::Network
