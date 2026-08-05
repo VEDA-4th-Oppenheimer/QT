@@ -36,6 +36,12 @@ public:
     void connectToBroker(const QString &host, quint16 port, const QString &certDir = QString());
     void disconnectFromBroker();
 
+signals:
+    // 브로커가 retained 로 내려주는 카메라 설정. 카메라는 사용자별 자산이 아니라
+    // 킷의 일부라, 관리자가 한 곳에서 바꾸면 접속 중인 콘솔 전부에 반영된다.
+    // (등록 시점에 받은 config/cameras.json 은 브로커 연결 전 초기값으로 남는다)
+    void cameraConfigReceived(const QJsonObject &channels);
+
 public slots:
     void requestScan(int panStartDdeg, int panEndDdeg,
                       int tiltStartDdeg, int tiltEndDdeg,
@@ -63,6 +69,7 @@ private:
     void handleStateScan(const QByteArray &payload);
     void handleEventProgress(const QByteArray &payload);
     void handleEventError(const QByteArray &payload);
+    void handleConfigCameras(const QByteArray &payload);
     bool acceptsReqId(const QString &incoming) const;   // 내가 보낸 req_id 아니면 무시(계약 §4)
 
     std::unique_ptr<mqtt::async_client> m_client;

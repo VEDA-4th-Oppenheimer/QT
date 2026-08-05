@@ -16,8 +16,13 @@ RtspSource::RtspSource(QObject *parent) : QObject(parent) {
 }
 
 RtspSource::~RtspSource() {
+    stopAll();
+}
+
+void RtspSource::stopAll() {
     for (auto *d : std::as_const(m_decoders)) d->stop();
     for (auto *d : std::as_const(m_decoders)) { d->wait(3000); delete d; }
+    m_decoders.clear();
 }
 
 void RtspSource::loadConfigAndStart(const QString &path) {
@@ -27,7 +32,24 @@ void RtspSource::loadConfigAndStart(const QString &path) {
         return;
     }
     const auto root = QJsonDocument::fromJson(f.readAll()).object();
-    const auto channels = root.value("channels").toObject();
+    applyChannels(root.value("channels").toObject(), path);
+}
+
+void RtspSource::applyChannels(const QJsonObject &channels, const QString &origin) {
+    if (channels.isEmpty()) {
+        emit logLine("RTSP", QString("%1 에 채널 설정 없음").arg(origin));
+        return;
+    }
+    // retained 메시지는 재접속할 때마다 다시 온다. 같은 내용에 스트림을 끊고
+    // 다시 붙이면 화면만 깜빡이므로 그냥 무시한다.
+    if (channels == m_applied) return;
+
+    const bool restarting = !m_decoders.isEmpty();
+    if (restarting) {
+        emit logLine("RTSP", QString("카메라 설정 갱신(%1) — 스트림을 다시 엽니다").arg(origin));
+        stopAll();
+    }
+
     for (auto it = channels.begin(); it != channels.end(); ++it) {
         const int ch = it.key().toInt();
         const QString url = it.value().toString();
@@ -40,6 +62,11 @@ void RtspSource::loadConfigAndStart(const QString &path) {
         m_decoders.insert(ch, dec);
         dec->start();
     }
-    if (m_decoders.isEmpty())
-        emit logLine("RTSP", QString("%1 에 채널 설정 없음").arg(path));
+
+    if (m_decoders.isEmpty()) {
+        emit logLine("RTSP", QString("%1 에 쓸 수 있는 채널이 없음(1~4 범위 밖이거나 URL 비어 있음)").arg(origin));
+        return;
+    }
+    m_applied = channels;
+    emit logLine("RTSP", QString("채널 %1개 시작 (%2)").arg(m_decoders.size()).arg(origin));
 }
