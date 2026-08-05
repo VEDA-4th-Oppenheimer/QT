@@ -28,6 +28,11 @@ private:
     void rebuildUi();          // 테마 전환 시 중앙 위젯을 통째로 다시 만든다
     void setThemeMode(Theme::Mode mode);
     void setDemoMode(bool demo);
+    // 최초 실행 설정. 접속 설정이 없으면 등록 마법사를 띄워 1회용 토큰으로
+    // 인증서·카메라 설정을 받아온다. 설정이 갖춰졌으면 true.
+    bool ensureConfigured();
+    // 사용자 데이터(인증서·설정)를 지우고 앱을 종료한다. 다음 실행 때 마법사가 뜬다.
+    void logout();
     void appendLog(const QString &tag, const QString &msg);
 
     TopBar         *m_topBar    = nullptr;

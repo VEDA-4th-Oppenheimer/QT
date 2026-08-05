@@ -4,6 +4,8 @@
 #include <QJsonArray>
 #include <QDateTime>
 #include <QUuid>
+#include <QSysInfo>
+#include <QRegularExpression>
 #include <QDir>
 #include <QFile>
 #include <QDebug>
@@ -67,8 +69,23 @@ void MqttBridge::connectToBroker(const QString &host, quint16 port, const QStrin
     const std::string scheme = haveCerts ? "ssl://" : "tcp://";
     const std::string uri = scheme + QStringLiteral("%1:%2").arg(host).arg(port).toStdString();
 
-    // 계약 §1: Client ID 고정 "qt-console" — 중복 접속하면 서로 끊긴다.
-    m_client = std::make_unique<mqtt::async_client>(uri, "qt-console");
+    // Client ID 는 인스턴스마다 달라야 한다. MQTT 는 같은 ID 로 두 번째가 붙으면
+    // 브로커가 첫 번째를 끊으므로, 고정 ID 로 배포하면 두 명이 콘솔을 켜는 순간
+    // 서로 계속 끊어내는 상태가 된다.
+    //   계약서 §1 은 "고정 qt-console" 이라고 적고 있으나 다중 콘솔에서 성립하지
+    //   않는다. 권한은 브로커가 인증서 CN 으로 판정하므로(mosquitto.conf 의
+    //   use_identity_as_username true → ACL 의 user qt-console), Client ID 를
+    //   바꿔도 인증서와 ACL 은 그대로 쓸 수 있다.
+    // 호스트명으로 "누구 콘솔인지" 브로커 로그에서 알아볼 수 있게 하고, 같은 PC
+    // 에서 두 개를 띄워도 겹치지 않도록 난수를 붙인다.
+    QString hostTag = QSysInfo::machineHostName();
+    hostTag.remove(QRegularExpression(QStringLiteral("[^A-Za-z0-9-]")));
+    if (hostTag.isEmpty()) hostTag = QStringLiteral("host");
+    const QString clientId = QStringLiteral("qt-console-%1-%2")
+        .arg(hostTag.left(12),
+             QUuid::createUuid().toString(QUuid::Id128).left(4));
+
+    m_client = std::make_unique<mqtt::async_client>(uri, clientId.toStdString());
     m_client->set_callback(*this);
 
     mqtt::connect_options opts;
