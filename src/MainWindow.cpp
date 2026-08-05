@@ -89,6 +89,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     } else {
         demoAction->setChecked(true);
     }
+    // 등록 때 받은 파일로 먼저 띄우고, 브로커가 붙으면 retained 설정으로 덮는다.
+    // 파일은 "브로커 연결 전"용 초기값이고, 실제 기준은 브로커 쪽이다.
+    connect(m_mqtt, &MqttBridge::cameraConfigReceived, m_video,
+            [this](const QJsonObject &ch) {
+                m_video->applyChannels(ch, QStringLiteral("브로커"));
+            });
     m_video->loadConfigAndStart();
 }
 

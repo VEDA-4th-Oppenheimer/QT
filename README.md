@@ -7,10 +7,13 @@ Hanwha Vision **PNM-C16083RVQ** 멀티센서 카메라 + **TOFSense-F2D** 1D LiD
 서명)을 그대로 구현한다.
 
 - **UI**: Qt6 Widgets, 다크 관제실 테마 (`src/Theme.h`)
-- **CCTV 영상**: RTSP 직접 연결(MQTT 경유 아님). `src/RtspDecoder`가 FFmpeg
-  (libavformat/avcodec/swscale)로 채널별 RTSP 스트림을 백그라운드 스레드에서
-  디코딩해 `CameraTile`에 공급한다 (`config/cameras.json`에 설정된 채널만 — 없으면
-  해당 채널은 Demo/Live 상태를 그대로 따른다).
+- **CCTV 영상**: RTSP 직접 연결(영상 자체는 MQTT 경유 아님). `src/RtspDecoder`가
+  FFmpeg(libavformat/avcodec/swscale)로 채널별 RTSP 스트림을 백그라운드 스레드에서
+  디코딩해 `CameraTile`에 공급한다.
+  **어떤 카메라를 볼지는 브로커가 정한다** — `adts/config/cameras` 를 retained 로
+  구독해 적용한다. 카메라는 사용자별 자산이 아니라 킷의 일부라, 관리자가 RPi 에서
+  한 번 바꾸면 접속 중인 콘솔 전부에 반영된다. 등록 때 받아 저장한
+  `config/cameras.json` 은 **브로커 연결 전 초기값**으로만 쓰인다.
 - **MQTT**: Eclipse Paho MQTT C++ (`src/MqttBridge`) — 스캔 제어/상태 전용
   (`adts/...` 토픽). 브로커는 **RPi 에 상주**(Mosquitto)하며 Qt·카메라 단·통합
   데몬이 모두 이 브로커의 클라이언트다. **포트 8883 + mTLS**. 인증서가 없으면
@@ -299,6 +302,7 @@ DISARM 만 상태와 무관하게 항상 활성(비상정지).
 | `adts/state/scan` | 구독 | 1 | 예 | 스캔 결과 — 파일 경로만(점 데이터 없음) |
 | `adts/event/progress` | 구독 | 0 | 아니오 | 진행률 ~2Hz, 유실 가정(완료 판정은 state 로) |
 | `adts/event/error` | 구독 | 1 | 아니오 | 오류 코드/메시지 |
+| `adts/config/cameras` | 구독 | 1 | **예** | 카메라 RTSP URL — `{"channels":{"1":"rtsp://…"}}`. RPi 에서 `broker/publish-config.sh` 로 발행 |
 
 접속이 안 될 때 브로커에서 직접 들여다보면 어느 구간이 끊겼는지 빨리 갈린다:
 
