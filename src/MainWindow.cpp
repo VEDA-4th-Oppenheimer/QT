@@ -11,6 +11,7 @@
 #include "MqttBridge.h"
 #include "DemoBridge.h"
 #include "RtspSource.h"
+#include "EnrollDialog.h"
 #include "Theme.h"
 #include "ConfigPath.h"
 
@@ -24,6 +25,8 @@
 #include <QActionGroup>
 #include <QDateTime>
 #include <QFile>
+#include <QDir>
+#include <QMessageBox>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -55,6 +58,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     demoAction->setChecked(false);
     connect(demoAction, &QAction::toggled, this, &MainWindow::setDemoMode);
 
+    modeMenu->addSeparator();
+    auto *logoutAction = modeMenu->addAction(QString::fromUtf8("로그아웃 (인증서·설정 삭제)"));
+    connect(logoutAction, &QAction::triggered, this, &MainWindow::logout);
+
     // 개발자모드(다크 + 한화비전 오렌지 액센트) / 사용자모드(라이트) — 화면 구성은
     // 동일, 색만 바뀐다. Qt 스타일시트는 위젯 생성 시점에 굳어버리므로(재적용
     // 안 됨), 전환 시 중앙 위젯을 통째로 다시 만든다(rebuildUi 참고).
@@ -73,7 +80,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     rebuildUi();
 
-    setDemoMode(false);
+    // 설정이 없으면 최초 설정을 받는다. 사용자가 취소하면 브로커 접속을 시도하는
+    // 대신 Demo 모드로 띄운다 — 설정 없이 접속을 걸면 5초마다 재시도만 반복하고
+    // 화면은 비어 있어서, 빈 실화면보다 데모가 낫다.
+    // (메뉴 체크 상태를 함께 맞춰야 하므로 setDemoMode 직접 호출 대신 액션을 켠다)
+    if (ensureConfigured()) {
+        setDemoMode(false);
+    } else {
+        demoAction->setChecked(true);
+    }
     m_video->loadConfigAndStart();
 }
 
@@ -265,6 +280,40 @@ QWidget *MainWindow::buildDashboardTab() {
     m_topView = new TopViewPanel(page);
     l->addWidget(m_topView);
     return page;
+}
+
+bool MainWindow::ensureConfigured() {
+    if (configReady()) return true;
+
+    // 배포본 최초 실행. 인증서(MQTT)와 카메라 설정(RTSP)을 발급 서버에서 한 번에
+    // 받아오므로, 사용자는 토큰만 입력하면 둘 다 붙는다.
+    EnrollDialog dlg(this);
+    return (dlg.exec() == QDialog::Accepted) && configReady();
+}
+
+void MainWindow::logout() {
+    const auto btn = QMessageBox::question(
+        this, QString::fromUtf8("로그아웃"),
+        QString::fromUtf8(
+            "이 기기에 저장된 인증서와 접속 설정을 삭제합니다.\n"
+            "다시 사용하려면 새 토큰을 발급받아야 합니다.\n\n계속할까요?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (btn != QMessageBox::Yes) return;
+
+    const QString root = userDataRoot();
+    if (!QDir(root).removeRecursively()) {
+        QMessageBox::critical(
+            this, QString::fromUtf8("삭제 실패"),
+            QString::fromUtf8("아래 폴더를 지우지 못했습니다. 직접 삭제해 주세요.\n\n%1").arg(root));
+        return;
+    }
+
+    // 여기서 마법사를 다시 띄우지 않고 종료한다. MQTT 연결과 RTSP 디코더를 살아
+    // 있는 채로 갈아끼우려면 정리 경로가 필요한데, 재시작이 훨씬 단순하고 확실하다.
+    QMessageBox::information(
+        this, QString::fromUtf8("로그아웃 완료"),
+        QString::fromUtf8("설정을 삭제했습니다. 앱을 종료합니다.\n다시 실행하면 등록 화면이 나타납니다."));
+    close();
 }
 
 void MainWindow::setDemoMode(bool demo) {

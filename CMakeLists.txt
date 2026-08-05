@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 find_package(PahoMqttCpp REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
@@ -27,6 +27,7 @@ set(SOURCES
     src/DatasetTab.cpp
     src/EventLogTab.cpp
     src/MqttBridge.cpp
+    src/EnrollDialog.cpp
     src/DemoBridge.cpp
     src/RtspDecoder.cpp
     src/RtspSource.cpp
@@ -48,6 +49,7 @@ set(HEADERS
     src/DatasetTab.h
     src/EventLogTab.h
     src/MqttBridge.h
+    src/EnrollDialog.h
     src/DemoBridge.h
     src/RtspDecoder.h
     src/RtspSource.h
@@ -66,7 +68,9 @@ else()
     set(APP_ICON_SOURCES)
 endif()
 
-qt_add_executable(spatial_vms ${MACOSX_BUNDLE_FLAG} ${SOURCES} ${HEADERS} ${APP_ICON_SOURCES})
+# resources.qrc: 사설 CA 공개 인증서를 실행파일에 박는다(발급 서버 검증용).
+qt_add_executable(spatial_vms ${MACOSX_BUNDLE_FLAG} ${SOURCES} ${HEADERS}
+                  resources/resources.qrc ${APP_ICON_SOURCES})
 
 set_target_properties(spatial_vms PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "SPATIAL-VMS"
@@ -80,6 +84,7 @@ target_include_directories(spatial_vms PRIVATE src)
 
 target_link_libraries(spatial_vms PRIVATE
     Qt6::Widgets
+    Qt6::Network
     PahoMqttCpp::paho-mqttpp3
     PkgConfig::FFMPEG
 )

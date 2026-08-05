@@ -1,0 +1,14 @@
+<!DOCTYPE RCC>
+<!--
+  실행파일에 박아 넣는 리소스.
+
+  ca.crt 는 ADTS 사설 CA 의 **공개** 인증서다. 개인키(ca.key)가 아니므로 배포본에
+  들어가도 안전하고, 오히려 들어가야 한다 — 최초 발급(/enroll) 시점에는 아직
+  받은 인증서가 없어서 서버 신원을 검증할 근거가 이것뿐이다.
+  CA 를 재발급하면 이 파일도 같이 갱신할 것.
+-->
+<RCC>
+    <qresource prefix="/certs">
+        <file>ca.crt</file>
+    </qresource>
+</RCC>
