@@ -12,6 +12,8 @@
 #include "DemoBridge.h"
 #include "RtspSource.h"
 #include "EnrollDialog.h"
+#include "ScanFetcher.h"
+#include <QFileDialog>
 #include "CameraConfig.h"
 #include "Theme.h"
 #include "ConfigPath.h"
@@ -58,6 +60,27 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_mqtt = new MqttBridge(this);
     m_demo = new DemoBridge(this);
     m_video = new RtspSource(this);
+    m_scanFetcher = new ScanFetcher(this);
+
+    // ScanFetcher 는 MainWindow 소유라 rebuildUi 로 위젯이 갈려도 살아남는다.
+    // 여기서 한 번만 연결하고, 람다는 호출 시점의 m_topView 를 본다.
+    connect(m_scanFetcher, &ScanFetcher::cloudReady, this, [this](const ScanCloud &c) {
+        m_lastCloud = c; m_haveCloud = true;
+        m_topView->setScanCloud(c);
+        appendLog("EXPORT", QString::fromUtf8("포인트클라우드 %1점 표시 (미반사 %2, 반경 %3 m)")
+                                .arg(c.count()).arg(c.invalid).arg(c.radiusM(), 0, 'f', 1));
+    });
+    connect(m_scanFetcher, &ScanFetcher::failed, this, [this](const QString &why) {
+        m_topView->setCloudStatus(QString::fromUtf8("CLOUD 실패"), true);
+        appendLog("EXPORT", QString::fromUtf8("포인트클라우드 가져오기 실패 — %1").arg(why));
+    });
+    connect(m_scanFetcher, &ScanFetcher::progress, this, [this](const QString &m) {
+        appendLog("EXPORT", m);
+    });
+    connect(m_scanFetcher, &ScanFetcher::listReady, this,
+            [this](const QVector<ScanEntry> &e, const QString &note) {
+        if (m_topView != nullptr) m_topView->setScanList(e, note);
+    });
 
     auto *modeMenu = menuBar()->addMenu(QString::fromUtf8("모드"));
     auto *demoAction = modeMenu->addAction(QString::fromUtf8("Demo Mode (브로커 없이 실행)"));
@@ -68,6 +91,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     modeMenu->addSeparator();
     auto *camAction = modeMenu->addAction(QString::fromUtf8("카메라 설정…"));
     connect(camAction, &QAction::triggered, this, &MainWindow::editCameraSettings);
+
+    auto *openScanAction = modeMenu->addAction(QString::fromUtf8("스캔 파일 열기… (.pcd)"));
+    connect(openScanAction, &QAction::triggered, this, &MainWindow::openScanFile);
 
     auto *logoutAction = modeMenu->addAction(QString::fromUtf8("로그아웃 (인증서·설정 삭제)"));
     connect(logoutAction, &QAction::triggered, this, &MainWindow::logout);
@@ -181,6 +207,10 @@ void MainWindow::rebuildUi() {
             QString msg = QString("state/scan — %1 (%2점)").arg(r.pcdPath).arg(r.points);
             if (r.durationS > 0.0) msg += QString(", %1s").arg(r.durationS, 0, 'f', 1);
             appendLog("EXPORT", msg);
+            // 스캔이 끝나면 .pcd 를 받아 Top-View 에 자동으로 깐다. 계약 §9 가
+            // 미결이라 경로만 오므로, 로컬에 있으면 그걸 쓰고 없으면 발급
+            // 서비스(8443)의 GET /scan 으로 받는다 — ScanFetcher 참고.
+            if (r.ok && !r.pcdPath.isEmpty()) m_scanFetcher->fetch(r.pcdPath);
         });
         connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
             appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));
@@ -262,6 +292,17 @@ void MainWindow::rebuildUi() {
         m_topView->setScanResult(m_lastResult);
         m_calibTab->setScanResult(m_lastResult);
     }
+    if (m_haveCloud) m_topView->setScanCloud(m_lastCloud);
+
+    // 3D 칸의 파일 목록 — 위젯이 새로 만들어졌으므로 매번 다시 잇는다.
+    connect(m_topView, &TopViewPanel::refreshRequested, this, [this] {
+        m_scanFetcher->refreshList();
+    });
+    connect(m_topView, &TopViewPanel::scanChosen, this,
+            [this](const QString &name, const QString &localPath) {
+        if (!localPath.isEmpty()) m_scanFetcher->loadLocal(localPath);
+        else                      m_scanFetcher->fetch(name);
+    });
 }
 
 QWidget *MainWindow::buildDashboardTab() {
@@ -434,6 +475,26 @@ void MainWindow::setDemoMode(bool demo) {
         }
     }
     m_mqtt->connectToBroker(host, port, certDir);
+
+    // 스캔 파일도 같은 RPi 에서 받는다 — 브로커(8883)와 발급 서비스(8443)가
+    // 같은 호스트에 있다. 포트만 다르다.
+    m_scanFetcher->setServer(host, 8443);
+    if (!certDir.isEmpty()) {
+        // QSslKey 는 PKCS#8 을 못 읽고 조용히 null 을 돌려준다 — gen-certs.sh 가
+        // 같이 만들어 주는 전통 RSA(-trad) 쪽을 먼저 본다.
+        const QString trad = certDir + QStringLiteral("/qt-console-trad.key");
+        const QString plain = certDir + QStringLiteral("/qt-console.key");
+        m_scanFetcher->setClientCert(certDir + QStringLiteral("/qt-console.crt"),
+                                     QFileInfo::exists(trad) ? trad : plain);
+    }
+}
+
+void MainWindow::openScanFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QString::fromUtf8("스캔 파일 열기"), QString(),
+        QString::fromUtf8("포인트클라우드 (*.pcd);;모든 파일 (*)"));
+    if (path.isEmpty()) return;
+    m_scanFetcher->loadLocal(path);
 }
 
 void MainWindow::appendLog(const QString &tag, const QString &msg) {

@@ -1,6 +1,7 @@
 #pragma once
 #include <QMainWindow>
 #include "Models.h"
+#include "ScanCloud.h"
 #include "Theme.h"
 
 class TopBar;
@@ -16,6 +17,7 @@ class DataBridge;
 class MqttBridge;
 class DemoBridge;
 class RtspSource;
+class ScanFetcher;
 class QTabWidget;
 
 class MainWindow : public QMainWindow {
@@ -37,6 +39,9 @@ private:
     // 받아야 해서 과하다 — 카메라는 인증서와 무관하다.
     void editCameraSettings();
     void appendLog(const QString &tag, const QString &msg);
+    // 스캔 완료(state/scan) 시 .pcd 를 받아 Top-View 에 깔기까지의 배선.
+    void configureScanFetcher();
+    void openScanFile();
 
     TopBar         *m_topBar    = nullptr;
     TiltBanner     *m_banner    = nullptr;
@@ -51,6 +56,7 @@ private:
     MqttBridge *m_mqtt = nullptr;
     DemoBridge *m_demo = nullptr;
     RtspSource *m_video = nullptr;
+    ScanFetcher *m_scanFetcher = nullptr;
     bool m_demoMode = false;
 
     // 테마 전환 시 위젯을 다시 만들기 때문에(rebuildUi), 새 위젯이 다음 업데이트
@@ -59,5 +65,7 @@ private:
     ImuState     m_lastImu;
     ScanProgress m_lastProgress;
     ScanResult   m_lastResult;
+    ScanCloud    m_lastCloud;
     bool m_haveDaemonState = false, m_haveImu = false, m_haveProgress = false, m_haveResult = false;
+    bool m_haveCloud = false;
 };

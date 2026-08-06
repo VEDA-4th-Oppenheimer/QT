@@ -11,3 +11,6 @@ config/cameras.json
 # 실제 MQTT 브로커 호스트/인증서 경로 — 커밋 금지. config/mqtt.example.json 참고.
 config/mqtt.json
 certs/
+
+# 스캔 포인트클라우드 — 용량이 크고 현장 데이터다
+scans/
