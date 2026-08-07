@@ -118,7 +118,10 @@ void MqttBridge::connectToBroker(const QString &host, quint16 port, const QStrin
 void MqttBridge::attemptConnect() {
     if (!m_client || m_client->is_connected()) return;
     try {
-        m_client->connect(m_connOpts);
+        // 리스너를 넘겨야 실패를 알 수 있다. connect() 자체는 비동기라 호스트가
+        // 꺼져 있어도 여기서 예외가 나지 않는다 — 아래 catch 는 "이미 접속 시도
+        // 중" 같은 즉시 오류만 잡는다.
+        m_client->connect(m_connOpts, nullptr, *this);
     } catch (const mqtt::exception &exc) {
         // 접속 시도가 이미 진행 중이어도 여기로 온다 — 재시도 타이머가 계속
         // 돌고 있으므로 조용히 넘긴다. 로그는 첫 실패 때만 남긴다.
@@ -130,6 +133,24 @@ void MqttBridge::attemptConnect() {
                                       .arg(exc.what()).arg(kReconnectRetryMs / 1000));
         }
     }
+}
+
+void MqttBridge::on_failure(const mqtt::token &tok) {
+    const int rc = tok.get_return_code();
+    // Paho 스레드에서 불린다 — UI 갱신은 GUI 스레드로 넘긴다.
+    QMetaObject::invokeMethod(this, [this, rc] {
+        emit brokerStateChanged(false);
+        if (!m_loggedFailure) {
+            m_loggedFailure = true;
+            emit logLine("MQTT", QString("연결 실패 (rc=%1) — %2초마다 재시도")
+                                      .arg(rc).arg(kReconnectRetryMs / 1000));
+        }
+    }, Qt::QueuedConnection);
+}
+
+void MqttBridge::on_success(const mqtt::token &) {
+    // 실제 "붙었다" 처리는 connected() 콜백에서 한다 — 구독까지 거기서 걸기 때문에
+    // 여기서 중복으로 알리지 않는다.
 }
 
 void MqttBridge::disconnectFromBroker() {
@@ -222,14 +243,20 @@ void MqttBridge::subscribeAll() {
 }
 
 void MqttBridge::connected(const std::string & /*cause*/) {
-    m_retryTimer.stop();       // 붙었으니 재시도 중단 (이후 끊김은 Paho 자동 재접속이 담당)
-    m_loggedFailure = false;
-    emit brokerStateChanged(true);
-    subscribeAll();
-    emit logLine("MQTT", QString("broker connected (%1:%2), state/#·event/# 구독").arg(m_host).arg(m_port));
+    // Paho 네트워크 스레드에서 불린다. QTimer 는 자기 스레드에서만 멈출 수 있어서
+    // (여기서 stop() 하면 "Timers cannot be stopped from another thread") 본문을
+    // GUI 스레드로 넘긴다 — message_arrived 와 같은 방식이다.
+    QMetaObject::invokeMethod(this, [this] {
+        m_retryTimer.stop();   // 붙었으니 재시도 중단 (이후 끊김은 Paho 자동 재접속이 담당)
+        m_loggedFailure = false;
+        emit brokerStateChanged(true);
+        subscribeAll();
+        emit logLine("MQTT", QString("broker connected (%1:%2), state/#·event/# 구독").arg(m_host).arg(m_port));
+    }, Qt::QueuedConnection);
 }
 
 void MqttBridge::connection_lost(const std::string &cause) {
+    QMetaObject::invokeMethod(this, [this, cause] {
     emit brokerStateChanged(false);
     emit logLine("MQTT", QString("connection lost: %1").arg(QString::fromStdString(cause)));
     // LWT 는 브로커가 대신 발행해 주지만(계약 §5.2), 로컬 UI 도 즉시 OFFLINE 으로
@@ -238,6 +265,7 @@ void MqttBridge::connection_lost(const std::string &cause) {
     offline.state = "OFFLINE";
     offline.online = false;
     emit daemonStateUpdated(offline);
+    }, Qt::QueuedConnection);
 }
 
 void MqttBridge::delivery_complete(mqtt::delivery_token_ptr /*token*/) {}

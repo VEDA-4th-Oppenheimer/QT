@@ -12,8 +12,10 @@ DemoBridge::DemoBridge(QObject *parent) : DataBridge(parent) {
 }
 
 void DemoBridge::start() {
+    m_running = true;
     emit brokerStateChanged(false);
     QTimer::singleShot(600, this, [this] {
+        if (!m_running) return;   // 그 사이 Live 로 전환됐다 — 가짜 CONNECTED 를 쏘면 안 된다
         emit brokerStateChanged(true);
         emit logLine("MQTT", QStringLiteral("데모 브로커 시뮬레이션 — state/#·event/# 구독"));
         publishDaemonState("IDLE");
@@ -27,6 +29,7 @@ void DemoBridge::start() {
 }
 
 void DemoBridge::stop() {
+    m_running = false;
     m_imuTimer.stop();
     m_objTimer.stop();
 }
@@ -114,6 +117,7 @@ void DemoBridge::runScanScript() {
 
         m_scanning = false;
         QTimer::singleShot(400, this, [this] {
+            if (!m_running) return;
             if (m_daemonState == "EXPORT") publishDaemonState("IDLE");
         });
         return;
@@ -121,6 +125,7 @@ void DemoBridge::runScanScript() {
 
     const Item s = steps[m_scanStep];
     QTimer::singleShot(s.delayMs, this, [this, s] {
+        if (!m_running) return;
         if (m_daemonState != "SCANNING") return;
         emit logLine("SCAN", s.msg);
         ScanProgress p;
