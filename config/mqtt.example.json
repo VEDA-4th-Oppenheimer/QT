@@ -1,6 +1,8 @@
 {
   "_comment": "실제 값은 config/mqtt.json 으로 복사해서 채우세요 (커밋되지 않음). MQTT_INTERFACE_CONTRACT.md v1.0 §1/§6 기준: 브로커는 RPi 상주, 포트 8883 + mTLS. cert_dir 아래 ca.crt/qt-console.crt/qt-console.key 가 없으면 평문 tcp:// 로 degraded 접속(로컬 개발용).",
+  "_comment_server_name": "8443(스캔 파일) TLS 호스트명 검증에 쓸 이름. 서버 인증서 SAN 에 현재 IP 가 없어도 붙게 해준다. 인증서를 현재 주소로 재발급했다면 \"\" 로 두면 host 로 검증한다. 자세한 건 README '스캔 포인트클라우드' 참고.",
   "host": "10.144.31.125",
   "port": 8883,
-  "cert_dir": "certs"
+  "cert_dir": "certs",
+  "server_name": "raspberrypi"
 }

@@ -313,10 +313,39 @@ cmake --build build --config Release
   `FAIL_IF_NO_PEER_CERT` 는 켜지 않는다 — 핸드셰이크는 누구나 되지만 `/scan` 은
   핸들러에서 `SSL_get_verify_result` 를 직접 확인해 거부한다.
 - **파일명만.** `/` 나 `%` 가 하나라도 있으면 400. 디렉터리는 `ADTS_SCAN_DIR`
-  (기본 `/home/pi/final_project/scans`)로 고정이라 경로 탈출이 성립하지 않는다.
+  로 고정이라 경로 탈출이 성립하지 않는다.
   `%` 를 디코드하지 않고 거부하는 이유는 스캔 파일명에 인코딩이 필요 없고,
   디코더를 두는 것 자체가 우회 표면이 되기 때문이다.
 - **`.pcd` 확장자만.**
+
+### TLS 호스트명 (`server_name`)
+
+8443 접속은 `mqtt.json` 의 `host`(보통 DHCP 로 받은 IP)로 하는데, RPi 서버 인증서
+SAN 에는 발급 당시의 IP 와 `raspberrypi`/`localhost` 만 들어 있다. 주소가 바뀌면
+`QSslSocket` 의 호스트명 검증에 걸려 `The host name did not match any of the valid
+hosts for this certificate` 로 핸드셰이크가 깨진다 — **브로커는 붙는데 스캔만 안 오는**
+모습이 된다(paho 는 `ssl_options.verify` 가 기본 꺼짐이라 8883 은 안 걸린다).
+
+그래서 `mqtt.json` 의 `server_name`(기본 `raspberrypi`)으로 검증할 호스트명만
+인증서상의 이름에 맞춘다. 사설 CA 체인 검증과 mTLS 는 그대로다. 서버 인증서를 현재
+주소로 재발급했다면 `""` 로 두면 `host` 검증으로 돌아간다.
+
+### 서버 쪽 전제 (RPi)
+
+목록이 계속 `로컬 N건 · 서버 목록 실패` 로만 뜬다면 대개 Qt 가 아니라 RPi 쪽이다.
+문구에 붙는 사유로 어디서 막혔는지 갈린다.
+
+| 사유 | 뜻 | 조치 |
+|---|---|---|
+| `SSL handshake failed: The host name did not match…` | 인증서 SAN 불일치 | 위 `server_name` |
+| `HTTP 404` + `없는 경로입니다` | 발급 서비스에 `/scans` 라우트가 없다 — 옛 바이너리 | RPi `develop` 로 `adts_enroll` 재빌드·재배포 |
+| `HTTP 404` + `스캔 디렉터리가 없습니다` | `ADTS_SCAN_DIR` 을 서비스가 못 읽는다 | 아래 |
+
+마지막 건이 헷갈린다. 유닛(`broker/adts-enroll.service`)에 `ProtectHome=true` 가
+걸려 있어 **`/home` 아래는 경로가 맞아도 못 읽는다.** 데몬은 `/var/lib/adts/scans`
+를 1순위로 쓰지만 그 디렉터리가 없으면 작업 디렉터리의 `./scans`(= 홈 아래)로 조용히
+폴백하므로, 이 상태가 되면 파일은 쌓이는데 서비스는 하나도 못 본다. `/var/lib/adts/scans`
+를 `pi` 소유로 만들어 두면 양쪽이 같은 곳을 본다.
 
 수동으로도 열 수 있다 — 상단 메뉴 `모드 → 스캔 파일 열기… (.pcd)`.
 
