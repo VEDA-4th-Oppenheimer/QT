@@ -7,7 +7,9 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QNetworkRequest;
 class QSslConfiguration;
+class QUrl;
 
 // state/scan 이 준 .pcd 경로를 실제 파일로 바꿔 온다.
 //
@@ -39,6 +41,10 @@ public:
     void setServer(const QString &host, quint16 port);
     void setClientCert(const QString &certPath, const QString &keyPath);
 
+    // TLS 호스트명 검증에 쓸 이름. 접속은 setServer 의 host(보통 IP)로 하되
+    // 인증서는 이 이름으로 맞춰본다 — 아래 주석 참고. 비우면 host 를 그대로 쓴다.
+    void setPeerVerifyName(const QString &name);
+
     // pcdPath 는 데몬이 보낸 경로("./scans/xxx.pcd"). 파일명만 뽑아서 쓴다.
     void fetch(const QString &pcdPath);
 
@@ -58,6 +64,7 @@ signals:
 private:
     void handleReply(QNetworkReply *reply, const QString &label);
     void handleList(QNetworkReply *reply);
+    QNetworkRequest makeRequest(const QUrl &url, const QSslConfiguration &ssl) const;
     QVector<ScanEntry> localEntries() const;
     QSslConfiguration sslConfig(bool *ok) const;
     QString localCandidate(const QString &fileName) const;
@@ -66,4 +73,5 @@ private:
     QString  m_host;
     quint16  m_port = 8443;
     QString  m_certPath, m_keyPath;
+    QString  m_verifyName;
 };

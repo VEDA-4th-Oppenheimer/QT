@@ -42,6 +42,29 @@ void ScanFetcher::setClientCert(const QString &certPath, const QString &keyPath)
     m_keyPath = keyPath;
 }
 
+void ScanFetcher::setPeerVerifyName(const QString &name) {
+    m_verifyName = name;
+}
+
+// 두 요청(목록/파일)이 같은 TLS 설정을 쓰도록 한 군데로 모은다.
+//
+// 접속은 m_host(브로커와 같은 주소, 보통 DHCP 로 받은 IP)로 하는데, RPi 서버
+// 인증서 SAN 에는 발급 당시의 IP 와 raspberrypi/localhost 만 들어 있다. 주소가
+// 바뀌면 QSslSocket 의 호스트명 검증이 걸려 "The host name did not match ..." 로
+// 핸드셰이크가 깨진다(MQTT 는 paho 의 verify 가 기본 꺼짐이라 안 걸린다 — 그래서
+// 브로커는 붙는데 스캔만 안 오는 모습이 된다).
+//
+// 그래서 호스트명만 인증서상의 이름으로 맞춘다. 사설 CA 체인 검증과 mTLS 는
+// 그대로라 신뢰 수준은 MQTT 와 같다. 정석은 서버 인증서를 현재 주소로 재발급하는
+// 것이고, 그때는 mqtt.json 의 server_name 을 비우면 이 우회가 꺼진다.
+QNetworkRequest ScanFetcher::makeRequest(const QUrl &url, const QSslConfiguration &ssl) const {
+    QNetworkRequest req(url);
+    req.setSslConfiguration(ssl);
+    req.setTransferTimeout(kTimeoutMs);
+    if (!m_verifyName.isEmpty()) req.setPeerVerifyName(m_verifyName);
+    return req;
+}
+
 // 데몬 경로의 파일명이 개발 트리/사용자 데이터의 scans/ 아래에 이미 있는지 본다.
 QString ScanFetcher::localCandidate(const QString &fileName) const {
     const QString rel = QStringLiteral("scans/") + fileName;
@@ -115,10 +138,8 @@ void ScanFetcher::refreshList() {
         return;
     }
 
-    QNetworkRequest req(QUrl(QStringLiteral("https://%1:%2/scans").arg(m_host).arg(m_port)));
-    req.setSslConfiguration(ssl);
-    req.setTransferTimeout(kTimeoutMs);
-    QNetworkReply *reply = m_net->get(req);
+    const QUrl url(QStringLiteral("https://%1:%2/scans").arg(m_host).arg(m_port));
+    QNetworkReply *reply = m_net->get(makeRequest(url, ssl));
     connect(reply, &QNetworkReply::finished, this, [this, reply] { handleList(reply); });
 }
 
@@ -195,12 +216,8 @@ void ScanFetcher::fetch(const QString &pcdPath) {
 
     const QUrl url(QStringLiteral("https://%1:%2/scan/%3")
                        .arg(m_host).arg(m_port).arg(QString::fromUtf8(QUrl::toPercentEncoding(fileName))));
-    QNetworkRequest req(url);
-    req.setSslConfiguration(ssl);
-    req.setTransferTimeout(kTimeoutMs);
-
     emit progress(QStringLiteral("스캔 파일 요청 %1").arg(fileName));
-    QNetworkReply *reply = m_net->get(req);
+    QNetworkReply *reply = m_net->get(makeRequest(url, ssl));
     connect(reply, &QNetworkReply::finished, this, [this, reply, fileName] {
         handleReply(reply, fileName);
     });

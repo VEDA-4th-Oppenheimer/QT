@@ -463,12 +463,17 @@ void MainWindow::setDemoMode(bool demo) {
     QString host = "localhost";
     quint16 port = 1883;
     QString certDir;
+    // 8443 TLS 검증에 쓸 이름. 서버 인증서가 CN=raspberrypi 로 발급되므로 기본값도
+    // 그것으로 둔다 — ScanFetcher::makeRequest 주석 참고. 인증서를 현재 주소로
+    // 재발급했다면 mqtt.json 에서 ""로 덮어써 host 검증으로 되돌리면 된다.
+    QString serverName = "raspberrypi";
     QFile f(resolveConfigPath("config/mqtt.json"));
     if (f.open(QIODevice::ReadOnly)) {
         const auto o = QJsonDocument::fromJson(f.readAll()).object();
         host    = o.value("host").toString(host);
         port    = static_cast<quint16>(o.value("port").toInt(port));
         certDir = o.value("cert_dir").toString();
+        if (o.contains("server_name")) serverName = o.value("server_name").toString();
         // cert_dir 은 보통 "certs" 같은 상대경로다. 그대로 넘기면 MqttBridge 가
         // 프로세스 CWD 기준으로 찾는데, Finder 더블클릭이나 IDE 실행이면 CWD 가
         // "/" 라 인증서를 못 찾는다. 그러면 평문 tcp:// 로 degraded 접속하고,
@@ -483,6 +488,7 @@ void MainWindow::setDemoMode(bool demo) {
     // 스캔 파일도 같은 RPi 에서 받는다 — 브로커(8883)와 발급 서비스(8443)가
     // 같은 호스트에 있다. 포트만 다르다.
     m_scanFetcher->setServer(host, 8443);
+    m_scanFetcher->setPeerVerifyName(serverName);
     if (!certDir.isEmpty()) {
         // QSslKey 는 PKCS#8 을 못 읽고 조용히 null 을 돌려준다 — gen-certs.sh 가
         // 같이 만들어 주는 전통 RSA(-trad) 쪽을 먼저 본다.
