@@ -68,4 +68,8 @@ private:
     ScanCloud    m_lastCloud;
     bool m_haveDaemonState = false, m_haveImu = false, m_haveProgress = false, m_haveResult = false;
     bool m_haveCloud = false;
+    // 브로커 연결 상태도 캐싱해야 한다 — 연결이 유지되는 동안에는 신호가 다시
+    // 오지 않아서, 테마 전환으로 TopBar 를 새로 만들면 생성자 기본값
+    // (DISCONNECTED)에 갇힌 채 영영 정정되지 않는다.
+    bool m_lastBrokerUp = false, m_haveBrokerState = false;
 };

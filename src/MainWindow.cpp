@@ -178,7 +178,10 @@ void MainWindow::rebuildUi() {
     // connect() 는 Qt 가 알아서 끊어준다(브리지 쪽 m_mqtt/m_demo/m_video 는
     // MainWindow 소유라 재생성 사이에도 그대로 살아있는다).
     for (DataBridge *src : {static_cast<DataBridge *>(m_demo), static_cast<DataBridge *>(m_mqtt)}) {
-        connect(src, &DataBridge::brokerStateChanged, m_topBar, &TopBar::setBrokerConnected);
+        connect(src, &DataBridge::brokerStateChanged, this, [this](bool up) {
+            m_lastBrokerUp = up; m_haveBrokerState = true;
+            m_topBar->setBrokerConnected(up);
+        });
         connect(src, &DataBridge::imuUpdated, this, [this](const ImuState &imu) {
             m_lastImu = imu; m_haveImu = true;
             m_topBar->setImu(imu);
@@ -272,6 +275,7 @@ void MainWindow::rebuildUi() {
 
     // 테마 전환으로 위젯을 새로 만든 경우, 다음 업데이트가 오기 전까지
     // OFFLINE/기본값으로 잠깐 보이지 않도록 마지막으로 받은 값을 즉시 채운다.
+    if (m_haveBrokerState) m_topBar->setBrokerConnected(m_lastBrokerUp);
     if (m_haveDaemonState) {
         m_topBar->setDaemonState(m_lastDaemonState);
         m_topView->setDaemonState(m_lastDaemonState);
