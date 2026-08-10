@@ -251,9 +251,12 @@ void MainWindow::rebuildUi() {
     });
 
     // 계약 §3.1 UI 기본값 권장: pan [0,1790] / tilt [-900,900] / step 10.
+    // 마지막 인자는 지면→라이다 회전축 높이(mm). 좌표 계산에는 들어가지 않고
+    // .pcd 헤더에 sensor_height_m 주석으로만 실린다 — 소비자가 바닥평면을 잡거나
+    // 다른 좌표계로 옮길 때 쓴다. 0 은 "모름"이라 실측값을 넣어 둔다(2.4 m).
     connect(m_topBar, &TopBar::scanRequested, this, [this, tabs] {
         (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))
-            ->requestScan(0, 1790, -900, 900, 10, 0);
+            ->requestScan(0, 1790, -900, 900, 10, 2400);
         tabs->setCurrentIndex(1);
     });
     connect(m_topBar, &TopBar::stopRequested, this, [this] {
