@@ -38,6 +38,8 @@ private:
     // 등록 후에도 카메라를 바꿀 수 있게 한다. 재등록을 시키면 인증서까지 다시
     // 받아야 해서 과하다 — 카메라는 인증서와 무관하다.
     void editCameraSettings();
+    // 지면→라이다 회전축 높이. 설치할 때 한 번 실측해 넣는 값이라 메뉴에 둔다.
+    void editSensorHeight();
     void appendLog(const QString &tag, const QString &msg);
     // 스캔 완료(state/scan) 시 .pcd 를 받아 Top-View 에 깔기까지의 배선.
     void configureScanFetcher();
@@ -58,6 +60,10 @@ private:
     RtspSource *m_video = nullptr;
     ScanFetcher *m_scanFetcher = nullptr;
     bool m_demoMode = false;
+
+    // cmd/scan 의 sensor_height_mm. QSettings 에 남겨 재실행해도 유지한다.
+    // 좌표에는 안 들어가고 .pcd 헤더 메타데이터로만 나간다(계약 §3.1).
+    int m_sensorHeightMm = 2400;
 
     // 테마 전환 시 위젯을 다시 만들기 때문에(rebuildUi), 새 위젯이 다음 업데이트
     // 전까지 기본값(OFFLINE 등)으로 잠깐 보이지 않도록 마지막 값을 캐싱해둔다.

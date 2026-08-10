@@ -33,7 +33,9 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QInputDialog>
 #include <QLineEdit>
+#include <QSettings>
 #include <QLabel>
 #include <QUrl>
 #include <QJsonDocument>
@@ -56,6 +58,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle(QString::fromUtf8("SPATIAL·VMS — Indoor 3D Mapping Console"));
     resize(1600, 940);
     setMinimumSize(1440, 860);
+
+    // 설치 높이는 장비를 옮기지 않는 한 그대로라 매번 묻지 않고 기억해둔다.
+    m_sensorHeightMm = QSettings().value(QStringLiteral("scan/sensor_height_mm"),
+                                         m_sensorHeightMm).toInt();
 
     m_mqtt = new MqttBridge(this);
     m_demo = new DemoBridge(this);
@@ -91,6 +97,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     modeMenu->addSeparator();
     auto *camAction = modeMenu->addAction(QString::fromUtf8("카메라 설정…"));
     connect(camAction, &QAction::triggered, this, &MainWindow::editCameraSettings);
+
+    auto *heightAction = modeMenu->addAction(QString::fromUtf8("센서 높이 설정…"));
+    connect(heightAction, &QAction::triggered, this, &MainWindow::editSensorHeight);
 
     auto *openScanAction = modeMenu->addAction(QString::fromUtf8("스캔 파일 열기… (.pcd)"));
     connect(openScanAction, &QAction::triggered, this, &MainWindow::openScanFile);
@@ -250,13 +259,18 @@ void MainWindow::rebuildUi() {
                               .arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1));
     });
 
-    // 계약 §3.1 UI 기본값 권장: pan [0,1790] / tilt [-900,900] / step 10.
+    // pan [0,1791] / tilt [-900,900] / step 9 (0.9도).
+    //
+    // 팬 끝각은 step 에 물려 있다. 틸트가 바닥을 지나면 한 줄이 방위 p 와 p+180 을
+    // 함께 훑으므로 팬은 반 바퀴만 돌면 되는데, 1800 까지 돌면 첫 줄과 마지막 줄이
+    // 같은 평면이라 중복된다. 그래서 "1800 - step" 까지만 간다(scan_warn_seam).
+    // step 을 바꾸면 이 값도 같이 바꿀 것 — 10 → 1790, 9 → 1791.
     // 마지막 인자는 지면→라이다 회전축 높이(mm). 좌표 계산에는 들어가지 않고
     // .pcd 헤더에 sensor_height_m 주석으로만 실린다 — 소비자가 바닥평면을 잡거나
-    // 다른 좌표계로 옮길 때 쓴다. 0 은 "모름"이라 실측값을 넣어 둔다(2.4 m).
+    // 다른 좌표계로 옮길 때 쓴다. 0 은 "모름". 모드 → 센서 높이 설정… 에서 바꾼다.
     connect(m_topBar, &TopBar::scanRequested, this, [this, tabs] {
         (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))
-            ->requestScan(0, 1790, -900, 900, 10, 2400);
+            ->requestScan(0, 1791, -900, 900, 9, m_sensorHeightMm);
         tabs->setCurrentIndex(1);
     });
     connect(m_topBar, &TopBar::stopRequested, this, [this] {
@@ -500,6 +514,25 @@ void MainWindow::setDemoMode(bool demo) {
         m_scanFetcher->setClientCert(certDir + QStringLiteral("/qt-console.crt"),
                                      QFileInfo::exists(trad) ? trad : plain);
     }
+}
+
+void MainWindow::editSensorHeight() {
+    // 입력은 미터로 받는다 — 설치할 때 재는 단위가 그쪽이고, mm 로 0 을 더 붙이다
+    // 자릿수를 틀리기 쉽다. 계약(§3.1)이 mm 정수라 저장 직전에 환산한다.
+    bool ok = false;
+    const double m = QInputDialog::getDouble(
+        this, QString::fromUtf8("센서 높이"),
+        QString::fromUtf8("바닥에서 라이다 회전축까지의 높이 (m)\n\n"
+                          "좌표 계산에는 쓰이지 않습니다. 스캔 결과 .pcd 헤더에\n"
+                          "sensor_height_m 으로 기록돼, 나중에 바닥평면을 잡거나\n"
+                          "다른 좌표계로 옮길 때 쓰입니다. 0 은 \"모름\"입니다."),
+        m_sensorHeightMm / 1000.0, 0.0, 10.0, 3, &ok);
+    if (!ok) return;
+
+    m_sensorHeightMm = static_cast<int>(qRound(m * 1000.0));
+    QSettings().setValue(QStringLiteral("scan/sensor_height_mm"), m_sensorHeightMm);
+    appendLog("SCAN", QString::fromUtf8("센서 높이 %1 m (%2 mm) — 다음 스캔부터 적용")
+                          .arg(m, 0, 'f', 3).arg(m_sensorHeightMm));
 }
 
 void MainWindow::openScanFile() {
