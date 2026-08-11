@@ -81,7 +81,7 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     const Row rows[9] = {
         {"adts/cmd/scan",       "on-demand", "Qt -> 데몬: 스캔 시작 (retain 금지)",     "TX"},
         {"adts/cmd/stop",       "on-demand", "Qt -> 데몬: 스캔 중단",                    "TX"},
-        {"adts/cmd/home",       "on-demand", "Qt -> 데몬: 홈만 수행 (데몬 무시, TODO)",   "TX"},
+        {"adts/cmd/home",       "on-demand", "Qt -> 데몬: 스캔 없이 홈만 수행 (IDLE 에서만)", "TX"},
         {"adts/cmd/disarm",     "on-demand", "Qt -> 데몬: 안전정지",                     "TX"},
         {"adts/cmd/rearm",      "on-demand", "Qt -> 데몬: DISARM 해제 (계약 외 확장)",   "TX"},
         {"adts/state/daemon",   "5s + 변경시","데몬 -> Qt: FSM·링크·IMU (retained, LWT)", "RX"},

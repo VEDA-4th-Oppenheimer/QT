@@ -190,7 +190,7 @@ void DemoBridge::requestStop() {
 }
 
 void DemoBridge::requestHome() {
-    emit logLine("SCAN", QStringLiteral("cmd/home 발행 (데모) — 홈 완료 (코어 미지원, 로그만)"));
+    emit logLine("SCAN", QStringLiteral("cmd/home 발행 (데모) — 홈 완료"));
 }
 
 void DemoBridge::requestDisarm() {

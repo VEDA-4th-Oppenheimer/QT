@@ -26,7 +26,8 @@ public slots:
                               int tiltStartDdeg, int tiltEndDdeg,
                               int stepDdeg, int sensorHeightMm) = 0;
     virtual void requestStop() = 0;     // cmd/stop
-    virtual void requestHome() = 0;     // cmd/home (데몬 쪽 TODO — 보통 불필요, §3.2)
+    virtual void requestHome() = 0;     // cmd/home — 스캔 없이 홈만. 스캔 직전에는 데몬이
+                                         // 자동으로 홈을 잡으므로 설치·정비용이다(§3.2).
     virtual void requestDisarm() = 0;   // cmd/disarm — 항상 발행 가능해야 한다(비상정지)
     virtual void requestRearm() = 0;    // cmd/rearm — DISARM -> IDLE 복구. 복구 가능 여부
                                          // (링크 생존 여부 등)는 데몬이 판정한다.

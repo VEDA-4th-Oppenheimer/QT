@@ -364,7 +364,11 @@ binary/binary_compressed 는 데몬이 만들지 않으므로 거부한다.
 
 4개 탭: `메인 대시보드`(기본) / `CALIBRATION` / `DEVICES / MQTT` / `EVENT LOG`.
 TopBar 버튼(HOME/SCAN/STOP/DISARM)의 활성화는 계약서 §5 상태-버튼 매핑을 따른다 —
-DISARM 만 상태와 무관하게 항상 활성(비상정지).
+DISARM 만 상태와 무관하게 항상 활성(비상정지). DISARM 상태에서는 HOME 버튼이
+REARM 으로 바뀌어 `cmd/rearm` 을 발행한다.
+
+스캔이 끝나면 데몬이 되감기 유예(15초) 뒤 스스로 DISARM 으로 내려가므로, 다음
+스캔 전에 REARM 을 한 번 눌러야 한다.
 
 ## MQTT 토픽
 
@@ -376,8 +380,9 @@ DISARM 만 상태와 무관하게 항상 활성(비상정지).
 |---|---|---|---|---|
 | `adts/cmd/scan` | 발행 | 1 | **금지** | 스캔 시작 — `{req_id, pan_ddeg:[a,b], tilt_ddeg:[a,b], step_ddeg, sensor_height_mm}` |
 | `adts/cmd/stop` | 발행 | 1 | 금지 | 스캔 중단 — `{req_id}` |
-| `adts/cmd/home` | 발행 | 1 | 금지 | 홈만 수행 — `{req_id}` (데몬 쪽 아직 미지원, TODO) |
+| `adts/cmd/home` | 발행 | 1 | 금지 | 스캔 없이 홈만 수행 — `{req_id}`. IDLE 에서만 받는다 |
 | `adts/cmd/disarm` | 발행 | 1 | 금지 | 안전정지 — `{req_id}` |
+| `adts/cmd/rearm` | 발행 | 1 | 금지 | DISARM 해제 — `{req_id}`. 계약 외 확장 |
 | `adts/state/daemon` | 구독 | 1 | 예 | FSM/링크/IMU. LWT 로 데몬 사망 시 `state:"OFFLINE"` 자동 수신 |
 | `adts/state/scan` | 구독 | 1 | 예 | 스캔 결과 — 파일 경로만(점 데이터 없음) |
 | `adts/event/progress` | 구독 | 0 | 아니오 | 진행률 ~2Hz, 유실 가정(완료 판정은 state 로) |
@@ -436,8 +441,6 @@ scripts/
 2-2. Windows 빌드·실행은 확인 완료(vcpkg + MSVC 2022). 남은 건
    `scripts/package_windows.ps1` — 아직 한 번도 실행하지 못했다. Windows 머신에서
    1회 돌려 zip 이 실제로 다른 PC 에서 뜨는지까지 봐야 한다.
-3. `cmd/home` — 데몬 쪽에 "스캔 없이 홈만" 트리거하는 API가 아직 없다(코어 담당
-   이현우 협의 필요). Qt 는 이미 발행하지만 데몬이 무시한다.
 4. 카메라 단 캘리브 결과(NCC/edge_rmse/extrinsic) 표시 — 발행 토픽이 아직 없다
    (이영민 협의, 참고문서 3번 §9). 토픽이 정해지면 CALIBRATION 탭에 QUALITY
    패널을 추가한다.
