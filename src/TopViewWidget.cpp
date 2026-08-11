@@ -134,50 +134,22 @@ void TopViewWidget::paintEvent(QPaintEvent *) {
     p.setPen(QPen(ring2, 1));
     p.drawEllipse(origin, 30, 30);
 
-    // 점군이 깔리면 원점 주변이 빽빽해져 라벨이 묻힌다. 그럴 때만 뒤에 판을 깐다
-    // (점군이 없을 때는 판이 없는 편이 깔끔하다).
-    const auto labelPlate = [&](const QRectF &r) {
-        if (m_cloud.isEmpty()) return;
-        QColor plate = Theme::MapBg;
-        plate.setAlphaF(0.72);
-        p.setPen(Qt::NoPen);
-        p.setBrush(plate);
-        p.drawRoundedRect(r.adjusted(-4, -1, 4, 1), 3, 3);
-        p.setBrush(Qt::NoBrush);
-    };
+    // 지도 위에는 글자를 얹지 않는다. 킷 라벨("4CH CAM + PAN-TILT" / 천장고),
+    // 감지 객체의 거리 라벨, 스케일 바 수치를 모두 뺐다 — 점군이 깔리면 라벨이
+    // 묻혀서 뒤에 판까지 깔아야 했고, 그렇게 겹쳐 놓아도 읽히지 않았다.
+    // 형태(킷 마커·객체 점·스케일 바)만 남긴다.
 
-    QFont mono("JetBrains Mono"); mono.setPixelSize(9); p.setFont(mono);
-    const QRectF r1(origin.x() - 90, origin.y() - 34, 180, 14);
-    labelPlate(r1);
-    p.setPen(Theme::TextDim);
-    p.drawText(r1, Qt::AlignCenter, QStringLiteral("4CH CAM + PAN-TILT"));
-    mono.setPixelSize(8); p.setFont(mono);
-    const QRectF r2(origin.x() - 90, origin.y() + 20, 180, 12);
-    labelPlate(r2);
-    p.setPen(Theme::TextFaint2);
-    p.drawText(r2, Qt::AlignCenter, QStringLiteral("CEILING H 2.85 m"));
-
-    // WiseAI 감지 객체 (실거리 라벨)
-    mono.setPixelSize(10); p.setFont(mono);
+    // WiseAI 감지 객체
     for (const auto &o : m_objects) {
         const QPointF c = toPx(o.posM);
         const QColor col = (o.cls == "VEHICLE") ? Theme::Ok : Theme::Warn;
         p.setPen(Qt::NoPen); p.setBrush(col);
         p.drawEllipse(c, 6, 6);
-        p.setPen(col);
-        p.drawText(c + QPointF(12, 4), QString("%1 %2 m").arg(o.cls).arg(o.distM, 0, 'f', 1));
     }
+    p.setBrush(Qt::NoBrush);
 
-    // 좌하단 스케일 바
-    p.setPen(QPen(Theme::TextFaint, 2));
-    p.drawLine(QPointF(20, height() - 18), QPointF(20 + 2 * s, height() - 18));
-    p.setPen(Theme::TextFaint);
-    QString scaleText = QString("2 m · ROOM %1 × %2 m").arg(m_roomW, 0, 'f', 1).arg(m_roomD, 0, 'f', 1);
-    if (!m_cloud.isEmpty()) {
-        const QRectF v = viewRectM();
-        scaleText += QString(" · VIEW %1 × %2 m").arg(v.width(), 0, 'f', 1).arg(v.height(), 0, 'f', 1);
-    }
-    p.drawText(QPointF(24 + 2 * s, height() - 14), scaleText);
+    // 스케일 바도 뺐다 — 수치를 지운 뒤로는 길이를 읽을 근거가 없어서 선만 남으면
+    // 아무 뜻도 없다. 거리 감각은 1 m 간격 격자가 대신한다.
 }
 
 void TopViewWidget::paintCloud(QPainter &p) const {
