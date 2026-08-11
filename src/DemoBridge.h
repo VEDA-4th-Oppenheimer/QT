@@ -42,6 +42,9 @@ private:
     QString m_reqId;
     QString m_daemonState = "IDLE";
     bool   m_scanning = false;
+    // 스캔 후 자동 DISARM 예약. singleShot 은 취소할 수 없어서 플래그로 무효화한다
+    // (m_running 과 같은 방식). 새 스캔·홈·수동 DISARM 이 오면 내린다.
+    bool   m_autoDisarmPending = false;
     // Live 로 전환된 뒤에도 예약된 singleShot 이 남아 가짜 상태를 쏘는 것을 막는다.
     // stop() 은 QTimer 멤버만 멈출 수 있고 singleShot 은 취소할 수 없기 때문이다.
     bool   m_running = false;

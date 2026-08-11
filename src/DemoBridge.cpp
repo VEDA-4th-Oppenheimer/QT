@@ -4,6 +4,13 @@
 #include <QVector>
 #include <cmath>
 
+namespace {
+// 데몬은 스캔 후 되감기 유예(POST_SCAN_DISARM_MS = 15초) 뒤 자동 DISARM 한다.
+// 데모는 흐름만 같게 하고 시간은 줄인다 — 데모 스캔 전체가 3초 남짓인데 15초를
+// 그대로 재현하면 시연 중 화면이 멈춘 것처럼 보인다.
+constexpr int kAutoDisarmDelayMs = 2500;
+}
+
 DemoBridge::DemoBridge(QObject *parent) : DataBridge(parent) {
     connect(&m_imuTimer, &QTimer::timeout, this, &DemoBridge::tickImu);
     connect(&m_objTimer, &QTimer::timeout, this, &DemoBridge::tickObjects);
@@ -118,7 +125,20 @@ void DemoBridge::runScanScript() {
         m_scanning = false;
         QTimer::singleShot(400, this, [this] {
             if (!m_running) return;
-            if (m_daemonState == "EXPORT") publishDaemonState("IDLE");
+            if (m_daemonState != "EXPORT") return;
+            publishDaemonState("IDLE");
+
+            // 데몬과 같은 흐름: 되감기 유예 뒤 스스로 DISARM 으로 내려간다.
+            // 그래서 다음 스캔 전에 REARM 을 눌러야 한다.
+            m_autoDisarmPending = true;
+            QTimer::singleShot(kAutoDisarmDelayMs, this, [this] {
+                if (!m_running || !m_autoDisarmPending) return;
+                if (m_daemonState != "IDLE") return;   // 그새 상태가 바뀌었다
+                m_autoDisarmPending = false;
+                publishDaemonState("DISARM");
+                emit logLine("POWER",
+                             QStringLiteral("되감기 유예 종료 — 자동 DISARM (데모)"));
+            });
         });
         return;
     }
@@ -172,6 +192,7 @@ void DemoBridge::requestScan(int panStartDdeg, int panEndDdeg,
         emit logLine("SCAN", QStringLiteral("이미 스캔 중 — cmd/scan 무시 (데모)"));
         return;
     }
+    m_autoDisarmPending = false;   // 새 작업 — 예약된 자동 DISARM 취소
     m_scanning = true;
     m_scanStep = 0;
     newReqId();
@@ -190,10 +211,12 @@ void DemoBridge::requestStop() {
 }
 
 void DemoBridge::requestHome() {
+    m_autoDisarmPending = false;   // 새 작업 — 예약된 자동 DISARM 취소
     emit logLine("SCAN", QStringLiteral("cmd/home 발행 (데모) — 홈 완료"));
 }
 
 void DemoBridge::requestDisarm() {
+    m_autoDisarmPending = false;   // 이미 DISARM — 예약은 의미 없다
     m_scanning = false;
     publishDaemonState("DISARM");
 
@@ -210,6 +233,9 @@ void DemoBridge::requestDisarm() {
 
 void DemoBridge::requestRearm() {
     if (m_daemonState != "DISARM") return;
+    // 복구 직후 IDLE 인 동안, 취소되지 않고 남아 있던 예약이 뒤늦게 터져
+    // 다시 DISARM 으로 떨어지는 것을 막는다.
+    m_autoDisarmPending = false;
     publishDaemonState("IDLE");
     emit logLine("POWER", QStringLiteral("REARM (데모) — DISARM 해제, IDLE 복귀"));
 }
