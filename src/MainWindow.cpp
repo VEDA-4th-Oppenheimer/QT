@@ -6,7 +6,6 @@
 #include "TopViewPanel.h"
 #include "CalibrationTab.h"
 #include "DevicesTab.h"
-#include "DatasetTab.h"
 #include "EventLogTab.h"
 #include "MqttBridge.h"
 #include "DemoBridge.h"
@@ -173,8 +172,6 @@ void MainWindow::rebuildUi() {
     tabs->addTab(m_calibTab, "CALIBRATION");
     m_devicesTab = new DevicesTab(this);
     tabs->addTab(m_devicesTab, "DEVICES / MQTT");
-    m_datasetTab = new DatasetTab(this);
-    tabs->addTab(m_datasetTab, "RGB-D DATASET");
     m_eventsTab = new EventLogTab(this);
     tabs->addTab(m_eventsTab, "EVENT LOG");
 
@@ -290,10 +287,6 @@ void MainWindow::rebuildUi() {
     });
     connect(m_topBar, &TopBar::rearmRequested, this, [this] {
         (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))->requestRearm();
-    });
-
-    connect(m_datasetTab, &DatasetTab::exportRequested, this, [this] {
-        appendLog("EXPORT", QString::fromUtf8("RGB-D 데이터셋 내보내기 완료"));
     });
 
     // 테마 전환으로 위젯을 새로 만든 경우, 다음 업데이트가 오기 전까지

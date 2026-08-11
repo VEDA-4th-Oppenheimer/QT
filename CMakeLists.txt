@@ -24,7 +24,6 @@ set(SOURCES
     src/StatusBar.cpp
     src/CalibrationTab.cpp
     src/DevicesTab.cpp
-    src/DatasetTab.cpp
     src/EventLogTab.cpp
     src/MqttBridge.cpp
     src/ScanCloud.cpp
@@ -49,7 +48,6 @@ set(HEADERS
     src/StatusBar.h
     src/CalibrationTab.h
     src/DevicesTab.h
-    src/DatasetTab.h
     src/EventLogTab.h
     src/MqttBridge.h
     src/ScanCloud.h

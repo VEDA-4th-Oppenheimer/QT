@@ -117,8 +117,3 @@ struct DeviceInfo {
 struct TopicInfo {
     QString topic, rate, desc, state;  // state: RX / TX / LOST
 };
-
-// RGB-D DATASET 탭 세트 테이블 행
-struct DatasetEntry {
-    QString id, ch, points, ncc, size, capturedAt;
-};

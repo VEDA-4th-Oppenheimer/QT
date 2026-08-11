@@ -11,7 +11,6 @@ class CameraTile;
 class TopViewPanel;
 class CalibrationTab;
 class DevicesTab;
-class DatasetTab;
 class EventLogTab;
 class DataBridge;
 class MqttBridge;
@@ -51,7 +50,6 @@ private:
     TopViewPanel   *m_topView   = nullptr;
     CalibrationTab *m_calibTab  = nullptr;
     DevicesTab     *m_devicesTab= nullptr;
-    DatasetTab     *m_datasetTab= nullptr;
     EventLogTab    *m_eventsTab = nullptr;
     CameraTile     *m_tiles[4]  = {nullptr, nullptr, nullptr, nullptr};
 

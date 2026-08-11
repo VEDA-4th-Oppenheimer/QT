@@ -362,7 +362,7 @@ binary/binary_compressed 는 데몬이 만들지 않으므로 거부한다.
 
 ## 화면 구성
 
-5개 탭: `메인 대시보드`(기본) / `CALIBRATION` / `DEVICES / MQTT` / `RGB-D DATASET` / `EVENT LOG`.
+4개 탭: `메인 대시보드`(기본) / `CALIBRATION` / `DEVICES / MQTT` / `EVENT LOG`.
 TopBar 버튼(HOME/SCAN/STOP/DISARM)의 활성화는 계약서 §5 상태-버튼 매핑을 따른다 —
 DISARM 만 상태와 무관하게 항상 활성(비상정지).
 
@@ -410,7 +410,7 @@ src/
 ├── RtspDecoder / RtspSource                # 채널별 RTSP 디코딩(FFmpeg) + config 로더
 ├── TopBar / TiltBanner / StatusBar        # 상단(HOME/SCAN/STOP/DISARM)/경고/하단 바
 ├── CameraTile / TopViewWidget / TopViewPanel  # 대시보드 좌(CCTV)/우(Top-View) 패널
-└── CalibrationTab / DevicesTab / DatasetTab / EventLogTab   # 나머지 4개 탭
+└── CalibrationTab / DevicesTab / EventLogTab   # 나머지 3개 탭
 
 config/
 ├── cameras.example.json / cameras.json   # RTSP — 후자는 gitignore
@@ -447,5 +447,3 @@ scripts/
    `src/ScanCloud`). 계약 §9 를 이 방식으로 확정하면 문서도 고쳐야 한다.
    **아직 남은 것**: 실장비 왕복 검증(데몬·발급 서비스 재기동 후 1회), 그리고
    에지 추출 — 지금은 점을 그대로 찍을 뿐 벽/기둥 선분을 뽑지는 않는다.
-6. `RGB-D DATASET` 탭은 `datasets/<set>/meta.json`을 스캔한다(없으면 예시로 대체) —
-   실제 캡처 파이프라인 위치가 정해지면 맞춘다.
