@@ -79,8 +79,9 @@ TopBar::TopBar(QWidget *parent) : QFrame(parent) {
     m_disarm->setObjectName("powerOff");   // 항상 빨강 계열 — 비상정지
 
     connect(m_home,   &QPushButton::clicked, this, [this] {
-        // DISARM 상태에선 이 버튼이 REARM 으로 바뀐다(계약 §5 "복구"). 계약에 별도
-        // rearm 토픽은 없어 데몬 지원 전까지는 로컬 상태만 IDLE 로 되돌린다(TODO).
+        // DISARM 상태에선 이 버튼이 REARM 으로 바뀐다(계약 §5 "복구").
+        // cmd/rearm 을 발행하고, 실제 IDLE 복귀는 데몬이 보내는 state/daemon 으로
+        // 반영된다 — 로컬에서 먼저 바꾸지 않는다(거부될 수 있으므로).
         if (m_lastState == "DISARM") emit rearmRequested();
         else                          emit homeRequested();
     });

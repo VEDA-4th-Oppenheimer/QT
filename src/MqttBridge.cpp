@@ -23,6 +23,10 @@ constexpr char kTopicCmdScan[]       = "adts/cmd/scan";
 constexpr char kTopicCmdStop[]       = "adts/cmd/stop";
 constexpr char kTopicCmdHome[]       = "adts/cmd/home";
 constexpr char kTopicCmdDisarm[]     = "adts/cmd/disarm";
+// 계약 문서에는 아직 없는 토픽이다(계약 §5 는 "복구" 버튼만 규정하고 대응 토픽이
+// 비어 있었다). RPi develop 브랜치의 데몬이 이 토픽을 구독해 DISARM -> IDLE 로
+// 복구하도록 구현되어 있어, 그에 맞춰 발행한다. 계약 반영은 이현우 협의 대기.
+constexpr char kTopicCmdRearm[]      = "adts/cmd/rearm";
 constexpr char kTopicStateWildcard[] = "adts/state/#";
 constexpr char kTopicEventWildcard[] = "adts/event/#";
 constexpr char kTopicStateDaemon[]   = "adts/state/daemon";
@@ -225,9 +229,13 @@ void MqttBridge::requestDisarm() {
 }
 
 void MqttBridge::requestRearm() {
-    // 계약에 DISARM -> IDLE 복구 토픽이 없다(코어에 rearm 트리거 API 미구현, TODO).
-    // 실제 킷에서는 하드웨어를 물리적으로 재무장해야 할 수 있다 — 여기선 로그만 남긴다.
-    emit logLine("POWER", QStringLiteral("REARM 요청 — 계약에 해당 토픽 없음(TODO, 이현우 협의 필요)"));
+    // 복구 가능 여부는 데몬이 판정한다(DISARM 상태인가 / STM32 링크가 살아있는가).
+    // Qt 가 미리 걸러내면 판정 기준이 두 곳으로 갈라지고, 화면의 state 는 retained
+    // 값이라 순간적으로 실제와 어긋날 수 있어 여기서 막으면 오히려 오작동한다.
+    // 거부되면 데몬 로그에 이유가 남고, state/daemon 이 DISARM 그대로 유지된다.
+    const QString reqId = newReqId();
+    publishCommand(kTopicCmdRearm, {{"req_id", reqId}});
+    emit logLine("POWER", QString("cmd/rearm 발행 (req_id=%1) — DISARM 해제 요청").arg(reqId));
 }
 
 void MqttBridge::subscribeAll() {

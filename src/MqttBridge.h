@@ -13,7 +13,7 @@
 // 문서와 실구현이 갈리는 지점(토픽에 kit_id 없음, state/scan 필드 축소)은
 // Models.h 상단 주석 참고 — 재확정되면 이 파일과 함께 고칠 것.
 //
-//   토픽(전부 adts/... 접두, kit_id 세그먼트 없음): cmd/{scan,stop,home,disarm} 발행,
+//   토픽(전부 adts/... 접두, kit_id 세그먼트 없음): cmd/{scan,stop,home,disarm,rearm} 발행,
 //                                  state/{daemon,scan}, event/{progress,error} 구독.
 //   포트 8883 + mTLS(클라이언트 인증서, TLS 1.2 — 데몬 쪽과 동일하게 고정).
 //   인증서가 아직 없으면(§6, 발급 전) tcp:// 평문 1883 으로 degraded 접속 — 로컬

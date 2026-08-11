@@ -78,18 +78,20 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     // 영상은 MQTT가 아니라 RTSP 직결(RtspSource, 대시보드 타일 참고). 아래는
     // RPi develop 브랜치 실구현 기준 토픽(kit_id 세그먼트 없음 — Models.h 참고).
     struct Row { const char *topic, *rate, *desc, *state; };
-    const Row rows[8] = {
+    const Row rows[9] = {
         {"adts/cmd/scan",       "on-demand", "Qt -> 데몬: 스캔 시작 (retain 금지)",     "TX"},
         {"adts/cmd/stop",       "on-demand", "Qt -> 데몬: 스캔 중단",                    "TX"},
         {"adts/cmd/home",       "on-demand", "Qt -> 데몬: 홈만 수행 (데몬 무시, TODO)",   "TX"},
         {"adts/cmd/disarm",     "on-demand", "Qt -> 데몬: 안전정지",                     "TX"},
+        {"adts/cmd/rearm",      "on-demand", "Qt -> 데몬: DISARM 해제 (계약 외 확장)",   "TX"},
         {"adts/state/daemon",   "5s + 변경시","데몬 -> Qt: FSM·링크·IMU (retained, LWT)", "RX"},
         {"adts/state/scan",     "on-demand", "데몬 -> Qt: 스캔 결과 파일 경로 (retained)","RX"},
         {"adts/event/progress", "~2 Hz",     "데몬 -> Qt: 진행률 (QoS0, 유실 가정)",      "RX"},
         {"adts/event/error",    "on-demand", "데몬 -> Qt: 오류 코드/메시지",             "RX"},
     };
 
-    m_table = new QTableWidget(8, 4, this);
+    constexpr int kRowCount = int(sizeof(rows) / sizeof(rows[0]));
+    m_table = new QTableWidget(kRowCount, 4, this);
     m_table->setHorizontalHeaderLabels({"TOPIC", "RATE", "DESC", "STATE"});
     m_table->verticalHeader()->hide();
     m_table->horizontalHeader()->setStretchLastSection(true);
@@ -105,7 +107,7 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
         if (s == "TX")   return Theme::AccentBright;
         return Theme::Ok;
     };
-    for (int r = 0; r < 8; ++r) {
+    for (int r = 0; r < kRowCount; ++r) {
         m_table->setItem(r, 0, new QTableWidgetItem(QString::fromUtf8(rows[r].topic)));
         m_table->setItem(r, 1, new QTableWidgetItem(QString::fromUtf8(rows[r].rate)));
         m_table->setItem(r, 2, new QTableWidgetItem(QString::fromUtf8(rows[r].desc)));

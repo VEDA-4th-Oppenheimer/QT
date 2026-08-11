@@ -28,8 +28,8 @@ public slots:
     virtual void requestStop() = 0;     // cmd/stop
     virtual void requestHome() = 0;     // cmd/home (데몬 쪽 TODO — 보통 불필요, §3.2)
     virtual void requestDisarm() = 0;   // cmd/disarm — 항상 발행 가능해야 한다(비상정지)
-    virtual void requestRearm() = 0;    // DISARM -> IDLE 복구. 계약에 토픽이 없다(TODO,
-                                         // 코어에 rearm 트리거 API가 아직 없음) — 데모에서만 동작.
+    virtual void requestRearm() = 0;    // cmd/rearm — DISARM -> IDLE 복구. 복구 가능 여부
+                                         // (링크 생존 여부 등)는 데몬이 판정한다.
 
 signals:
     void brokerStateChanged(bool connected);
