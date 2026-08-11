@@ -106,29 +106,10 @@ void TopViewWidget::paintEvent(QPaintEvent *) {
         p.drawLine(toPx({gx0, y}), toPx({gx1, y}));
     }
 
-    // 4채널 FOV 사분면
-    const QPointF corners[4] = {
-        toPx({-m_roomW / 2,  m_roomD / 2}), toPx({ m_roomW / 2,  m_roomD / 2}),
-        toPx({ m_roomW / 2, -m_roomD / 2}), toPx({-m_roomW / 2, -m_roomD / 2})
-    };
-    const double alpha[4] = {0.07, 0.05, 0.07, 0.03};   // CH1(N) CH2(E) CH3(S) CH4(W)
-    const char *fovLabel[4] = {"CH1 FOV", "CH2 FOV", "CH3 FOV", "CH4 FOV"};
-    QFont fovFont("JetBrains Mono"); fovFont.setPixelSize(9);
-    p.setFont(fovFont);
-    for (int i = 0; i < 4; ++i) {
-        QPainterPath wedge(origin);
-        wedge.lineTo(corners[i]);
-        wedge.lineTo(corners[(i + 1) % 4]);
-        wedge.closeSubpath();
-        QColor c = Theme::Accent; c.setAlphaF(alpha[i]);
-        p.fillPath(wedge, c);
-        p.setPen(QPen(Theme::ScanHighlight, 1, Qt::DashLine));
-        p.drawLine(origin, corners[i]);
-
-        const QPointF mid = (corners[i] + corners[(i + 1) % 4]) / 2.0;
-        p.setPen(Theme::ScanHighlight);
-        p.drawText(QRectF(mid.x() - 40, mid.y() - 7, 80, 14), Qt::AlignCenter, fovLabel[i]);
-    }
+    // 채널별 FOV 사분면(CH1=북 … CH4=서)은 그리지 않는다. 4채널이 실제로 어느
+    // 방향을 보는지가 설치마다 다른데, 사분면과 라벨은 그것이 확정된 것처럼
+    // 읽힌다 — 지도 위의 방위와 채널 번호를 잘못 짝지어 해석하게 된다.
+    // 킷 자체의 위치(아래 원점 마커)는 천장 중앙으로 고정이라 그대로 표시한다.
 
     // 실측 포인트클라우드 (에지·킷보다 아래에 깔린다)
     paintCloud(p);

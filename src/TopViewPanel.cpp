@@ -200,11 +200,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     ll->addWidget(wallSwatch);
     auto *lw = new QLabel("WALL", legend); mono10(lw); ll->addWidget(lw);
 
-    auto *fovSwatch = new QLabel(legend);
-    fovSwatch->setFixedSize(14, 10);
-    fovSwatch->setStyleSheet(QString("border:1px dashed %1;").arg(Theme::ScanHighlight.name()));
-    ll->addWidget(fovSwatch);
-    auto *lf = new QLabel("FOV", legend); mono10(lf); ll->addWidget(lf);
+    // FOV 항목은 뺐다 — 지도에서 채널별 사분면을 걷어냈다(TopViewWidget 주석 참고).
 
     auto *cloudSwatch = new QLabel(legend);
     cloudSwatch->setFixedSize(14, 10);
