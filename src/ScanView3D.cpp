@@ -11,6 +11,18 @@
 
 namespace {
 
+// ScanCloud 의 평면 좌표(floor.y = PCD +z, 전방/북)를 GL 월드 z 로 옮긴다.
+//
+// 부호를 뒤집는 이유 — 점군 프레임은 x=오른쪽(동) / z=전방(북) / 위=+ 이고,
+// 이걸 GL 에 (x, 위, z) 로 그대로 얹으면 (동, 위, 북) 이 된다. 실세계에서
+// 동×위 = -북 이므로 이 조합은 **왼손 좌표계**다. OpenGL 은 오른손 기준이라
+// 그대로 그리면 화면이 좌우로 뒤집혀 나온다(방위각 0°에서 북쪽에 서서 남쪽을
+// 보는데 동쪽이 오른편에 보이는 식).
+//
+// z 를 남쪽으로 잡으면 (동, 위, 남) 이 되어 동×위 = 남 = +z, 오른손계가 된다.
+// Top-View(2D)는 자체 좌표로 그리므로 영향받지 않는다.
+inline float worldZ(double cloudZ) { return static_cast<float>(-cloudZ); }
+
 // GLSL 120 — QOpenGLWidget 기본 표면(호환 프로파일 2.1)에서 그대로 돈다.
 // macOS 에서 코어 프로파일을 요구하면 3.2+ 셰이더로 갈아야 하는데, 점만 찍는
 // 데는 이득이 없어서 호환 쪽에 맞췄다.
@@ -110,7 +122,7 @@ void ScanView3D::setScanCloud(const ScanCloud &c) {
         for (int i = 0; i < n; ++i) {
             const float x = static_cast<float>(c.floor[i].x());
             const float y = c.height[i];
-            const float z = static_cast<float>(c.floor[i].y());
+            const float z = worldZ(c.floor[i].y());
             float t;
             if (m_colorBy == ColorBy::Height) {
                 // 램프는 t=0 이 높은 쪽이라 뒤집는다.
@@ -144,7 +156,7 @@ void ScanView3D::resetView() {
     }
     m_target = QVector3D(static_cast<float>((m_cloud.xMin + m_cloud.xMax) / 2.0),
                          static_cast<float>((m_cloud.hMin + m_cloud.hMax) / 2.0),
-                         static_cast<float>((m_cloud.zMin + m_cloud.zMax) / 2.0));
+                         worldZ((m_cloud.zMin + m_cloud.zMax) / 2.0));
     // 바운딩 스피어를 세로 화각(50°)에 맞춘다. 1.55배는 빈 모서리까지 감싸느라
     // 실제 점군이 화면의 절반 남짓밖에 안 찼다 — 조금 잘리더라도 크게 보는 편이
     // 스캔 확인에는 낫다.
@@ -191,8 +203,9 @@ void ScanView3D::buildGrid() {
         const float y = static_cast<float>(m_cloud.hMin);
         const int x0 = static_cast<int>(std::floor(m_cloud.xMin)) - 1;
         const int x1 = static_cast<int>(std::ceil(m_cloud.xMax)) + 1;
-        const int z0 = static_cast<int>(std::floor(m_cloud.zMin)) - 1;
-        const int z1 = static_cast<int>(std::ceil(m_cloud.zMax)) + 1;
+        // 점군과 같은 축으로 깔아야 격자가 어긋나지 않는다(worldZ 주석 참고).
+        const int z0 = static_cast<int>(std::floor(worldZ(m_cloud.zMax))) - 1;
+        const int z1 = static_cast<int>(std::ceil(worldZ(m_cloud.zMin))) + 1;
         for (int x = x0; x <= x1; ++x) {
             v << static_cast<float>(x) << y << static_cast<float>(z0)
               << static_cast<float>(x) << y << static_cast<float>(z1);
