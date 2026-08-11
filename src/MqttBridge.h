@@ -22,7 +22,13 @@
 //   데몬 쪽 Client ID 는 "adts-daemon" — 서로 다르므로 충돌 없음.
 //
 // 영상은 이 브릿지가 아니라 RtspSource 가 카메라에서 RTSP 로 직접 받는다(MQTT 경로 아님).
-class MqttBridge : public DataBridge, public virtual mqtt::callback {
+// iaction_listener 를 함께 상속하는 이유 — async_client::connect() 는 비동기라
+// 호스트가 죽어 있어도 예외를 던지지 않는다. 실패는 토큰 리스너로만 전달되므로,
+// 이걸 달지 않으면 "접속 실패"를 앱이 영영 알 수 없다(UI 가 마지막 표시를 그대로
+// 유지해 꺼진 브로커에도 CONNECTED 로 남는다).
+class MqttBridge : public DataBridge,
+                   public virtual mqtt::callback,
+                   public virtual mqtt::iaction_listener {
     Q_OBJECT
 public:
     explicit MqttBridge(QObject *parent = nullptr);
@@ -49,6 +55,10 @@ private:
     // mqtt::callback — Paho 내부 네트워크 스레드에서 호출됨
     void connected(const std::string &cause) override;
     void connection_lost(const std::string &cause) override;
+
+    // iaction_listener — connect() 토큰 결과. Paho 네트워크 스레드에서 불린다.
+    void on_failure(const mqtt::token &tok) override;
+    void on_success(const mqtt::token &tok) override;
     void message_arrived(mqtt::const_message_ptr msg) override;
     void delivery_complete(mqtt::delivery_token_ptr token) override;
 

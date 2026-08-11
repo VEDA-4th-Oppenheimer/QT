@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network OpenGLWidgets)
 find_package(PahoMqttCpp REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
@@ -27,6 +27,9 @@ set(SOURCES
     src/DatasetTab.cpp
     src/EventLogTab.cpp
     src/MqttBridge.cpp
+    src/ScanCloud.cpp
+    src/ScanFetcher.cpp
+    src/ScanView3D.cpp
     src/EnrollDialog.cpp
     src/DemoBridge.cpp
     src/RtspDecoder.cpp
@@ -49,6 +52,9 @@ set(HEADERS
     src/DatasetTab.h
     src/EventLogTab.h
     src/MqttBridge.h
+    src/ScanCloud.h
+    src/ScanFetcher.h
+    src/ScanView3D.h
     src/EnrollDialog.h
     src/DemoBridge.h
     src/RtspDecoder.h
@@ -91,6 +97,7 @@ endif()
 target_link_libraries(spatial_vms PRIVATE
     Qt6::Widgets
     Qt6::Network
+    Qt6::OpenGLWidgets
     PahoMqttCpp::paho-mqttpp3
     PkgConfig::FFMPEG
 )

@@ -296,6 +296,70 @@ cmake --build build --config Release
 압축을 풀어 `spatial_vms.exe` 를 실행하면 등록 화면이 뜬다. 설치 프로그램
 (Inno Setup 등)은 아직 없다 — zip 배포로도 동작하므로 우선순위를 낮췄다.
 
+## 스캔 포인트클라우드 (Top-View)
+
+스캔이 끝나면 `adts/state/scan` 이 `.pcd` **경로**만 준다(계약 §9). Qt 는 그 경로에서
+파일명만 떼어 두 갈래로 찾는다 — `src/ScanFetcher`.
+
+1. **로컬 `scans/`** 에 이미 있으면 그대로 읽는다(`resolveConfigPath` 순서를 따른다).
+   개발 중 `scp` 로 받아둔 파일이 여기 해당한다. `scans/` 는 gitignore 대상이다.
+2. 없으면 **`GET https://<host>:8443/scan/<파일명>`** 으로 받아온다.
+
+2번을 위해 발급 서비스에 읽기 전용 경로를 추가했다(RPi 저장소 `broker/enroll_service.c`).
+인증서를 발급하는 서비스에 파일 경로를 여는 것이라 세 겹으로 막았다:
+
+- **검증된 클라이언트 인증서 필수.** `/enroll` 은 인증서를 받기 *전에* 부르는
+  것이라 인증서를 요구할 수 없다. 그래서 `SSL_VERIFY_PEER` 만 켜고
+  `FAIL_IF_NO_PEER_CERT` 는 켜지 않는다 — 핸드셰이크는 누구나 되지만 `/scan` 은
+  핸들러에서 `SSL_get_verify_result` 를 직접 확인해 거부한다.
+- **파일명만.** `/` 나 `%` 가 하나라도 있으면 400. 디렉터리는 `ADTS_SCAN_DIR`
+  로 고정이라 경로 탈출이 성립하지 않는다.
+  `%` 를 디코드하지 않고 거부하는 이유는 스캔 파일명에 인코딩이 필요 없고,
+  디코더를 두는 것 자체가 우회 표면이 되기 때문이다.
+- **`.pcd` 확장자만.**
+
+### TLS 호스트명 (`server_name`)
+
+8443 접속은 `mqtt.json` 의 `host`(보통 DHCP 로 받은 IP)로 하는데, RPi 서버 인증서
+SAN 에는 발급 당시의 IP 와 `raspberrypi`/`localhost` 만 들어 있다. 주소가 바뀌면
+`QSslSocket` 의 호스트명 검증에 걸려 `The host name did not match any of the valid
+hosts for this certificate` 로 핸드셰이크가 깨진다 — **브로커는 붙는데 스캔만 안 오는**
+모습이 된다(paho 는 `ssl_options.verify` 가 기본 꺼짐이라 8883 은 안 걸린다).
+
+그래서 `mqtt.json` 의 `server_name`(기본 `raspberrypi`)으로 검증할 호스트명만
+인증서상의 이름에 맞춘다. 사설 CA 체인 검증과 mTLS 는 그대로다. 서버 인증서를 현재
+주소로 재발급했다면 `""` 로 두면 `host` 검증으로 돌아간다.
+
+### 서버 쪽 전제 (RPi)
+
+목록이 계속 `로컬 N건 · 서버 목록 실패` 로만 뜬다면 대개 Qt 가 아니라 RPi 쪽이다.
+문구에 붙는 사유로 어디서 막혔는지 갈린다.
+
+| 사유 | 뜻 | 조치 |
+|---|---|---|
+| `SSL handshake failed: The host name did not match…` | 인증서 SAN 불일치 | 위 `server_name` |
+| `HTTP 404` + `없는 경로입니다` | 발급 서비스에 `/scans` 라우트가 없다 — 옛 바이너리 | RPi `develop` 로 `adts_enroll` 재빌드·재배포 |
+| `HTTP 404` + `스캔 디렉터리가 없습니다` | `ADTS_SCAN_DIR` 을 서비스가 못 읽는다 | 아래 |
+
+마지막 건이 헷갈린다. 유닛(`broker/adts-enroll.service`)에 `ProtectHome=true` 가
+걸려 있어 **`/home` 아래는 경로가 맞아도 못 읽는다.** 데몬은 `/var/lib/adts/scans`
+를 1순위로 쓰지만 그 디렉터리가 없으면 작업 디렉터리의 `./scans`(= 홈 아래)로 조용히
+폴백하므로, 이 상태가 되면 파일은 쌓이는데 서비스는 하나도 못 본다. `/var/lib/adts/scans`
+를 `pi` 소유로 만들어 두면 양쪽이 같은 곳을 본다.
+
+수동으로도 열 수 있다 — 상단 메뉴 `모드 → 스캔 파일 열기… (.pcd)`.
+
+점 색은 **높이**로 칠한다(낮음=짙은 청색, 높음=밝은 난색). 상태색(Ok/Warn/Danger)과
+섞이지 않게 일부러 다른 계열을 쓴다 — "초록 점 = 정상"으로 읽히면 안 된다.
+스캔이 방보다 넓게 찍히면 뷰가 자동으로 넓어진다(스케일 바에 `VIEW` 로 표시).
+
+지원 형식은 데몬이 쓰는 **ASCII PCD**(`FIELDS x y z` / `DATA ascii`)뿐이다.
+binary/binary_compressed 는 데몬이 만들지 않으므로 거부한다.
+
+> PCD 원본 프레임은 `+x 오른쪽 / +y 아래 / +z 전방`, 원점은 센서다. Top-View 는
+> `+x 오른쪽 / +y 북`이라 평면 투영은 `(x, z)` 를 그대로 얹으면 되고, 높이는
+> 화면 관례(위가 +)에 맞춰 부호만 뒤집어 색상에 쓴다.
+
 ## 화면 구성
 
 5개 탭: `메인 대시보드`(기본) / `CALIBRATION` / `DEVICES / MQTT` / `RGB-D DATASET` / `EVENT LOG`.
@@ -377,8 +441,11 @@ scripts/
 4. 카메라 단 캘리브 결과(NCC/edge_rmse/extrinsic) 표시 — 발행 토픽이 아직 없다
    (이영민 협의, 참고문서 3번 §9). 토픽이 정해지면 CALIBRATION 탭에 QUALITY
    패널을 추가한다.
-5. `state/scan`이 포인트클라우드 "파일 경로"만 준다 — Top-View에 실제 라이다
-   벽/에지를 그리려면 그 파일을 읽어오는 전달 방식(scp/http/공유폴더, 계약 §9
-   미결)이 필요하다. 지금은 Demo Mode에서만 정적 방 외곽을 그린다.
+5. ~~`state/scan`이 경로만 준다~~ — 전달 방식을 정하고 구현했다. 발급 서비스
+   (8443)에 읽기 전용 `GET /scan/<파일명>` 을 달고, Qt 는 `state/scan` 을 받는
+   즉시 그 파일을 가져와 Top-View 에 점군을 깐다 (`src/ScanFetcher`,
+   `src/ScanCloud`). 계약 §9 를 이 방식으로 확정하면 문서도 고쳐야 한다.
+   **아직 남은 것**: 실장비 왕복 검증(데몬·발급 서비스 재기동 후 1회), 그리고
+   에지 추출 — 지금은 점을 그대로 찍을 뿐 벽/기둥 선분을 뽑지는 않는다.
 6. `RGB-D DATASET` 탭은 `datasets/<set>/meta.json`을 스캔한다(없으면 예시로 대체) —
    실제 캡처 파이프라인 위치가 정해지면 맞춘다.

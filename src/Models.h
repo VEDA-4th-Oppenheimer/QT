@@ -25,7 +25,10 @@ struct SpatialObject {
 
 struct ImuState {
     double roll = 0.0, pitch = 0.0;
-    bool   valid = true;    // false = 아직 측정 없음/IMU 미구현 — 화면에 표시하지 말 것(계약 §3.3)
+    // 기본값은 false 여야 한다 — 위젯들이 생성자에서 setImu({}) 로 자기를 초기화하는데,
+    // 여기가 true 면 "수신 전"이 roll=0/pitch=0 인 정상 수평 상태로 초록색 표시된다
+    // (데이터가 아예 안 와도 킷이 멀쩡해 보임). false 라야 N/A 로 뜬다.
+    bool   valid = false;   // false = 아직 측정 없음/IMU 미구현 — 화면에 표시하지 말 것(계약 §3.3)
     // 수평 게이트 임계값: "Point Cloud 이후 Camera Automatic Calibration" 문서 권장 초기값(1~2°, 미결/튜닝 대상).
     bool level(double tolDeg = 1.5) const {
         return std::abs(roll) <= tolDeg && std::abs(pitch) <= tolDeg;

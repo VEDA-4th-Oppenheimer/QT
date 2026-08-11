@@ -12,6 +12,8 @@
 #include "DemoBridge.h"
 #include "RtspSource.h"
 #include "EnrollDialog.h"
+#include "ScanFetcher.h"
+#include <QFileDialog>
 #include "CameraConfig.h"
 #include "Theme.h"
 #include "ConfigPath.h"
@@ -31,7 +33,9 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QInputDialog>
 #include <QLineEdit>
+#include <QSettings>
 #include <QLabel>
 #include <QUrl>
 #include <QJsonDocument>
@@ -55,9 +59,34 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     resize(1600, 940);
     setMinimumSize(1440, 860);
 
+    // 설치 높이는 장비를 옮기지 않는 한 그대로라 매번 묻지 않고 기억해둔다.
+    m_sensorHeightMm = QSettings().value(QStringLiteral("scan/sensor_height_mm"),
+                                         m_sensorHeightMm).toInt();
+
     m_mqtt = new MqttBridge(this);
     m_demo = new DemoBridge(this);
     m_video = new RtspSource(this);
+    m_scanFetcher = new ScanFetcher(this);
+
+    // ScanFetcher 는 MainWindow 소유라 rebuildUi 로 위젯이 갈려도 살아남는다.
+    // 여기서 한 번만 연결하고, 람다는 호출 시점의 m_topView 를 본다.
+    connect(m_scanFetcher, &ScanFetcher::cloudReady, this, [this](const ScanCloud &c) {
+        m_lastCloud = c; m_haveCloud = true;
+        m_topView->setScanCloud(c);
+        appendLog("EXPORT", QString::fromUtf8("포인트클라우드 %1점 표시 (미반사 %2, 반경 %3 m)")
+                                .arg(c.count()).arg(c.invalid).arg(c.radiusM(), 0, 'f', 1));
+    });
+    connect(m_scanFetcher, &ScanFetcher::failed, this, [this](const QString &why) {
+        m_topView->setCloudStatus(QString::fromUtf8("CLOUD 실패"), true);
+        appendLog("EXPORT", QString::fromUtf8("포인트클라우드 가져오기 실패 — %1").arg(why));
+    });
+    connect(m_scanFetcher, &ScanFetcher::progress, this, [this](const QString &m) {
+        appendLog("EXPORT", m);
+    });
+    connect(m_scanFetcher, &ScanFetcher::listReady, this,
+            [this](const QVector<ScanEntry> &e, const QString &note) {
+        if (m_topView != nullptr) m_topView->setScanList(e, note);
+    });
 
     auto *modeMenu = menuBar()->addMenu(QString::fromUtf8("모드"));
     auto *demoAction = modeMenu->addAction(QString::fromUtf8("Demo Mode (브로커 없이 실행)"));
@@ -68,6 +97,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     modeMenu->addSeparator();
     auto *camAction = modeMenu->addAction(QString::fromUtf8("카메라 설정…"));
     connect(camAction, &QAction::triggered, this, &MainWindow::editCameraSettings);
+
+    auto *heightAction = modeMenu->addAction(QString::fromUtf8("센서 높이 설정…"));
+    connect(heightAction, &QAction::triggered, this, &MainWindow::editSensorHeight);
+
+    auto *openScanAction = modeMenu->addAction(QString::fromUtf8("스캔 파일 열기… (.pcd)"));
+    connect(openScanAction, &QAction::triggered, this, &MainWindow::openScanFile);
 
     auto *logoutAction = modeMenu->addAction(QString::fromUtf8("로그아웃 (인증서·설정 삭제)"));
     connect(logoutAction, &QAction::triggered, this, &MainWindow::logout);
@@ -152,7 +187,10 @@ void MainWindow::rebuildUi() {
     // connect() 는 Qt 가 알아서 끊어준다(브리지 쪽 m_mqtt/m_demo/m_video 는
     // MainWindow 소유라 재생성 사이에도 그대로 살아있는다).
     for (DataBridge *src : {static_cast<DataBridge *>(m_demo), static_cast<DataBridge *>(m_mqtt)}) {
-        connect(src, &DataBridge::brokerStateChanged, m_topBar, &TopBar::setBrokerConnected);
+        connect(src, &DataBridge::brokerStateChanged, this, [this](bool up) {
+            m_lastBrokerUp = up; m_haveBrokerState = true;
+            m_topBar->setBrokerConnected(up);
+        });
         connect(src, &DataBridge::imuUpdated, this, [this](const ImuState &imu) {
             m_lastImu = imu; m_haveImu = true;
             m_topBar->setImu(imu);
@@ -181,6 +219,10 @@ void MainWindow::rebuildUi() {
             QString msg = QString("state/scan — %1 (%2점)").arg(r.pcdPath).arg(r.points);
             if (r.durationS > 0.0) msg += QString(", %1s").arg(r.durationS, 0, 'f', 1);
             appendLog("EXPORT", msg);
+            // 스캔이 끝나면 .pcd 를 받아 Top-View 에 자동으로 깐다. 계약 §9 가
+            // 미결이라 경로만 오므로, 로컬에 있으면 그걸 쓰고 없으면 발급
+            // 서비스(8443)의 GET /scan 으로 받는다 — ScanFetcher 참고.
+            if (r.ok && !r.pcdPath.isEmpty()) m_scanFetcher->fetch(r.pcdPath);
         });
         connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
             appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));
@@ -217,10 +259,18 @@ void MainWindow::rebuildUi() {
                               .arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1));
     });
 
-    // 계약 §3.1 UI 기본값 권장: pan [0,1790] / tilt [-900,900] / step 10.
+    // pan [0,1791] / tilt [-900,900] / step 9 (0.9도).
+    //
+    // 팬 끝각은 step 에 물려 있다. 틸트가 바닥을 지나면 한 줄이 방위 p 와 p+180 을
+    // 함께 훑으므로 팬은 반 바퀴만 돌면 되는데, 1800 까지 돌면 첫 줄과 마지막 줄이
+    // 같은 평면이라 중복된다. 그래서 "1800 - step" 까지만 간다(scan_warn_seam).
+    // step 을 바꾸면 이 값도 같이 바꿀 것 — 10 → 1790, 9 → 1791.
+    // 마지막 인자는 지면→라이다 회전축 높이(mm). 좌표 계산에는 들어가지 않고
+    // .pcd 헤더에 sensor_height_m 주석으로만 실린다 — 소비자가 바닥평면을 잡거나
+    // 다른 좌표계로 옮길 때 쓴다. 0 은 "모름". 모드 → 센서 높이 설정… 에서 바꾼다.
     connect(m_topBar, &TopBar::scanRequested, this, [this, tabs] {
         (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))
-            ->requestScan(0, 1790, -900, 900, 10, 0);
+            ->requestScan(0, 1791, -900, 900, 9, m_sensorHeightMm);
         tabs->setCurrentIndex(1);
     });
     connect(m_topBar, &TopBar::stopRequested, this, [this] {
@@ -242,6 +292,7 @@ void MainWindow::rebuildUi() {
 
     // 테마 전환으로 위젯을 새로 만든 경우, 다음 업데이트가 오기 전까지
     // OFFLINE/기본값으로 잠깐 보이지 않도록 마지막으로 받은 값을 즉시 채운다.
+    if (m_haveBrokerState) m_topBar->setBrokerConnected(m_lastBrokerUp);
     if (m_haveDaemonState) {
         m_topBar->setDaemonState(m_lastDaemonState);
         m_topView->setDaemonState(m_lastDaemonState);
@@ -262,6 +313,17 @@ void MainWindow::rebuildUi() {
         m_topView->setScanResult(m_lastResult);
         m_calibTab->setScanResult(m_lastResult);
     }
+    if (m_haveCloud) m_topView->setScanCloud(m_lastCloud);
+
+    // 3D 칸의 파일 목록 — 위젯이 새로 만들어졌으므로 매번 다시 잇는다.
+    connect(m_topView, &TopViewPanel::refreshRequested, this, [this] {
+        m_scanFetcher->refreshList();
+    });
+    connect(m_topView, &TopViewPanel::scanChosen, this,
+            [this](const QString &name, const QString &localPath) {
+        if (!localPath.isEmpty()) m_scanFetcher->loadLocal(localPath);
+        else                      m_scanFetcher->fetch(name);
+    });
 }
 
 QWidget *MainWindow::buildDashboardTab() {
@@ -418,12 +480,17 @@ void MainWindow::setDemoMode(bool demo) {
     QString host = "localhost";
     quint16 port = 1883;
     QString certDir;
+    // 8443 TLS 검증에 쓸 이름. 서버 인증서가 CN=raspberrypi 로 발급되므로 기본값도
+    // 그것으로 둔다 — ScanFetcher::makeRequest 주석 참고. 인증서를 현재 주소로
+    // 재발급했다면 mqtt.json 에서 ""로 덮어써 host 검증으로 되돌리면 된다.
+    QString serverName = "raspberrypi";
     QFile f(resolveConfigPath("config/mqtt.json"));
     if (f.open(QIODevice::ReadOnly)) {
         const auto o = QJsonDocument::fromJson(f.readAll()).object();
         host    = o.value("host").toString(host);
         port    = static_cast<quint16>(o.value("port").toInt(port));
         certDir = o.value("cert_dir").toString();
+        if (o.contains("server_name")) serverName = o.value("server_name").toString();
         // cert_dir 은 보통 "certs" 같은 상대경로다. 그대로 넘기면 MqttBridge 가
         // 프로세스 CWD 기준으로 찾는데, Finder 더블클릭이나 IDE 실행이면 CWD 가
         // "/" 라 인증서를 못 찾는다. 그러면 평문 tcp:// 로 degraded 접속하고,
@@ -434,6 +501,46 @@ void MainWindow::setDemoMode(bool demo) {
         }
     }
     m_mqtt->connectToBroker(host, port, certDir);
+
+    // 스캔 파일도 같은 RPi 에서 받는다 — 브로커(8883)와 발급 서비스(8443)가
+    // 같은 호스트에 있다. 포트만 다르다.
+    m_scanFetcher->setServer(host, 8443);
+    m_scanFetcher->setPeerVerifyName(serverName);
+    if (!certDir.isEmpty()) {
+        // QSslKey 는 PKCS#8 을 못 읽고 조용히 null 을 돌려준다 — gen-certs.sh 가
+        // 같이 만들어 주는 전통 RSA(-trad) 쪽을 먼저 본다.
+        const QString trad = certDir + QStringLiteral("/qt-console-trad.key");
+        const QString plain = certDir + QStringLiteral("/qt-console.key");
+        m_scanFetcher->setClientCert(certDir + QStringLiteral("/qt-console.crt"),
+                                     QFileInfo::exists(trad) ? trad : plain);
+    }
+}
+
+void MainWindow::editSensorHeight() {
+    // 입력은 미터로 받는다 — 설치할 때 재는 단위가 그쪽이고, mm 로 0 을 더 붙이다
+    // 자릿수를 틀리기 쉽다. 계약(§3.1)이 mm 정수라 저장 직전에 환산한다.
+    bool ok = false;
+    const double m = QInputDialog::getDouble(
+        this, QString::fromUtf8("센서 높이"),
+        QString::fromUtf8("바닥에서 라이다 회전축까지의 높이 (m)\n\n"
+                          "좌표 계산에는 쓰이지 않습니다. 스캔 결과 .pcd 헤더에\n"
+                          "sensor_height_m 으로 기록돼, 나중에 바닥평면을 잡거나\n"
+                          "다른 좌표계로 옮길 때 쓰입니다. 0 은 \"모름\"입니다."),
+        m_sensorHeightMm / 1000.0, 0.0, 10.0, 3, &ok);
+    if (!ok) return;
+
+    m_sensorHeightMm = static_cast<int>(qRound(m * 1000.0));
+    QSettings().setValue(QStringLiteral("scan/sensor_height_mm"), m_sensorHeightMm);
+    appendLog("SCAN", QString::fromUtf8("센서 높이 %1 m (%2 mm) — 다음 스캔부터 적용")
+                          .arg(m, 0, 'f', 3).arg(m_sensorHeightMm));
+}
+
+void MainWindow::openScanFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QString::fromUtf8("스캔 파일 열기"), QString(),
+        QString::fromUtf8("포인트클라우드 (*.pcd);;모든 파일 (*)"));
+    if (path.isEmpty()) return;
+    m_scanFetcher->loadLocal(path);
 }
 
 void MainWindow::appendLog(const QString &tag, const QString &msg) {
