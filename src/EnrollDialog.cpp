@@ -19,12 +19,17 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QHostAddress>
 #include <QSslCertificate>
 #include <QSslConfiguration>
 
 namespace {
 constexpr int kDefaultPort   = 8443;
 constexpr int kTimeoutMs     = 15000;
+
+// 서버 인증서에 들어 있는 이름. gen-certs.sh 가 CN=$(hostname) 로 발급하므로
+// RPi 기본 호스트명이 그대로 들어간다. mqtt.json 의 server_name 기본값과 같다.
+constexpr char kCertHostName[] = "raspberrypi";
 
 // 실행파일에 박아둔 사설 CA. 이것만 신뢰하도록 갈아끼운다(시스템 CA 는 쓰지 않는다).
 QList<QSslCertificate> bundledCa() {
@@ -137,6 +142,18 @@ void EnrollDialog::submit() {
     req.setSslConfiguration(ssl);
     req.setTransferTimeout(kTimeoutMs);
 
+    // 주소를 IP 로 입력하면 호스트명 검증이 걸린다. 서버 인증서 SAN 에는 발급
+    // 당시의 IP 와 호스트명만 들어 있어서, RPi 가 DHCP 로 다른 주소를 받으면
+    // "The host name did not match any of the valid hosts for this certificate"
+    // 로 핸드셰이크 단계에서 끊긴다 — 서버는 멀쩡한데 연결 실패로만 보인다.
+    //
+    // 그래서 IP 로 들어온 경우에만 검증 이름을 인증서상의 이름으로 맞춘다.
+    // 사설 CA 체인 검증은 그대로라, 이 CA 가 서명하지 않은 서버는 여전히 막힌다.
+    // 호스트명을 직접 입력했다면 그 이름으로 검증한다(우회하지 않는다).
+    if (!QHostAddress(host).isNull()) {
+        req.setPeerVerifyName(QLatin1String(kCertHostName));
+    }
+
     QJsonObject body;
     body["token"]       = token;
     body["device_name"] = m_device->text().trimmed();
@@ -237,6 +254,10 @@ bool EnrollDialog::installBundle(const QJsonObject &o, QString *err) {
     mqttOut["host"]     = mqtt.value(QStringLiteral("host")).toString();
     mqttOut["port"]     = mqtt.value(QStringLiteral("port")).toInt(8883);
     mqttOut["cert_dir"] = QStringLiteral("certs");
+    // 스캔 파일(8443)도 같은 이유로 호스트명 검증이 걸린다 — ScanFetcher 가 이
+    // 값으로 검증 이름을 맞춘다. 서버 인증서를 현재 주소로 재발급했다면 ""로
+    // 바꾸면 host 검증으로 돌아간다.
+    mqttOut["server_name"] = QLatin1String(kCertHostName);
     if (mqttOut["host"].toString().isEmpty()) {
         *err = QString::fromUtf8("서버 응답에 mqtt.host 가 없습니다.");
         return false;
