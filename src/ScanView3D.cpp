@@ -191,6 +191,11 @@ void ScanView3D::initializeGL() {
     buildGrid();
     glEnable(GL_DEPTH_TEST);
     glEnable(0x8642 /* GL_PROGRAM_POINT_SIZE */);
+    // 호환 프로파일(2.1)에서는 GL_POINT_SPRITE 를 켜야 프래그먼트 셰이더의
+    // gl_PointCoord 가 채워지는 드라이버가 있다(특히 인텔 통합 GPU) — 안 켜면
+    // gl_PointCoord 가 항상 (0,0)으로 나와 프래그먼트 셰이더의 원형 discard
+    // 조건(dot(d,d) > 0.25)에 모든 점이 걸려 점이 하나도 안 그려진다.
+    glEnable(0x8861 /* GL_POINT_SPRITE */);
     m_dirty = true;
 }
 

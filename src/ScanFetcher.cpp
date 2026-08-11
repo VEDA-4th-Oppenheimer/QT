@@ -75,7 +75,7 @@ QString ScanFetcher::localCandidate(const QString &fileName) const {
 void ScanFetcher::loadLocal(const QString &path) {
     ScanCloud cloud;
     QString err;
-    if (!loadPcdAscii(path, &cloud, &err)) {
+    if (!loadPcd(path, &cloud, &err)) {
         emit failed(QStringLiteral("%1 — %2").arg(QFileInfo(path).fileName(), err));
         return;
     }
@@ -239,7 +239,7 @@ void ScanFetcher::handleReply(QNetworkReply *reply, const QString &label) {
 
     ScanCloud cloud;
     QString err;
-    if (!parsePcdAscii(body, label, &cloud, &err)) {
+    if (!parsePcd(body, label, &cloud, &err)) {
         emit failed(QStringLiteral("%1 — %2").arg(label, err));
         return;
     }

@@ -38,11 +38,12 @@ struct ScanCloud {
     }
 };
 
-// ASCII PCD 를 읽는다. 데몬이 쓰는 형식(FIELDS x y z / TYPE F / DATA ascii)만
-// 지원한다 — binary/binary_compressed 는 데몬이 만들지 않으므로 거부한다.
+// PCD 를 읽는다. FIELDS 는 x y z 세 개만 지원(데몬 형식과 동일). DATA 는
+// ascii 와 binary(TYPE F, float32/float64) 를 지원한다 — binary_compressed
+// (LZF 압축)는 지원하지 않고 명확한 에러로 거부한다.
 // 실패하면 false 를 돌려주고 err 에 사용자에게 보여줄 사유를 채운다.
-bool loadPcdAscii(const QString &path, ScanCloud *out, QString *err);
+bool loadPcd(const QString &path, ScanCloud *out, QString *err);
 
 // 이미 메모리에 있는 내용으로 파싱한다(HTTP 응답 등).
-bool parsePcdAscii(const QByteArray &data, const QString &label,
-                   ScanCloud *out, QString *err);
+bool parsePcd(const QByteArray &data, const QString &label,
+              ScanCloud *out, QString *err);
