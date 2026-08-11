@@ -57,7 +57,13 @@ QString sourceForTag(const QString &tag) {
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle(QString::fromUtf8("SPATIAL·VMS — Indoor 3D Mapping Console"));
     resize(1600, 940);
-    setMinimumSize(1440, 860);
+    // 하한을 화면보다 크게 잡으면 안 된다. 윈도우에서 배율 125~150% 를 쓰면
+    // 860 논리픽셀이 물리적으로 1075~1290 이 되어 1080p 화면 세로에 안 들어가고,
+    // 그러면 Qt 가 레이아웃을 잘라내면서 **맨 아래 배치된 위젯부터** 사라진다
+    // (TOP-VIEW 의 ROLL/PITCH/SCAN PTS 통계바가 여기 해당했다). 작업표시줄과
+    // 윈도우 쪽 큰 기본 폰트가 몇십 픽셀을 더 먹어 경계에서 밀린다.
+    // 좁으면 지도가 먼저 줄고 수치는 남도록, 하한은 실제로 들어가는 크기로 낮춘다.
+    setMinimumSize(1280, 720);
 
     // 설치 높이는 장비를 옮기지 않는 한 그대로라 매번 묻지 않고 기억해둔다.
     m_sensorHeightMm = QSettings().value(QStringLiteral("scan/sensor_height_mm"),

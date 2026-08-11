@@ -87,7 +87,7 @@ constexpr float kPointSize = 2.2f;
 }   // namespace
 
 ScanView3D::ScanView3D(QWidget *parent) : QOpenGLWidget(parent) {
-    setMinimumHeight(280);
+    setMinimumHeight(200);   // TopViewWidget 과 같은 이유 — 좁으면 뷰가 먼저 양보한다
     setFocusPolicy(Qt::StrongFocus);
 }
 

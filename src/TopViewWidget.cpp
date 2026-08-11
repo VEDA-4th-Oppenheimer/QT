@@ -33,7 +33,9 @@ constexpr int kCloudBands = 6;   // 밴드 수 — 점마다 펜을 바꾸는 �
 }   // namespace
 
 TopViewWidget::TopViewWidget(QWidget *parent) : QWidget(parent) {
-    setMinimumSize(360, 300);
+    // 세로가 모자랄 때 잘려나가는 건 아래쪽 통계바다. 지도가 먼저 양보하도록
+    // 하한을 낮게 잡는다 — 200 이면 방 외곽과 점군 분포는 읽힌다.
+    setMinimumSize(320, 200);
 }
 
 void TopViewWidget::setRoomSize(double w, double d) { m_roomW = w; m_roomD = d; update(); }

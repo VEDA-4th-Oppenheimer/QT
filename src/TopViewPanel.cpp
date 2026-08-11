@@ -226,6 +226,10 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     // 하단 통계 바
     auto *stats = new QFrame(this);
     stats->setStyleSheet(QString("background:%1;border:none;").arg(Theme::BarBg.name()));
+    // 세로가 모자라면 지도가 줄어야지 이 줄이 사라지면 안 된다. 압축 대상에서
+    // 빼둔다 — ROLL/PITCH 는 스캔 전에 킷 수평을 맞추는 데 쓰는 값이라, 안 보이면
+    // 조작 자체가 안 된다(윈도우 고배율에서 실제로 잘려나갔다).
+    stats->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto *sv = new QVBoxLayout(stats);
     sv->setContentsMargins(11, 8, 11, 10);
     sv->setSpacing(8);
