@@ -222,7 +222,12 @@ void DemoBridge::requestDisarm() {
 
     KitError e;
     e.reqId = m_reqId;
-    e.code  = 0;
+    // ⚠️ 0 이 아니라 100 이다. 계약(§3.5)에서 0 은 ERR_NONE = "오류 없음" 이라,
+    //   오류 이벤트가 0 을 달고 오면 자기모순이다. 실물 데몬은 안전정지 계열을
+    //   전부 100 으로 보낸다 — 데모가 다른 번호를 쓰면 나중에 코드로 분기하는
+    //   UI 를 넣는 순간 "데모에선 되는데 실물에선 안 되는" 상황이 난다.
+    //   데모는 실물의 거짓 없는 대역이어야 한다.
+    e.code  = 100;   // ERRC_LINK_DEAD (안전정지 계열)
     e.name  = QStringLiteral("USER_DISARM");
     e.msg   = QStringLiteral("사용자 비상정지 (데모)");
     e.fatal = true;

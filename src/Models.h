@@ -88,9 +88,15 @@ struct ScanProgress {
 };
 
 // adts/event/error — 계약 §3.5. code 1~6 은 STM32 CMD_ERROR(protocol.h)
-// 원본, 100/101 은 데몬이 링크단절/홈타임아웃을 감지해 합성한 코드. 실구현은
-// STM 오류를 항상 name="STM_ERROR"(코드별 세부 이름 아님)로, fatal 필드 없이
-// 보낸다 — fatal 은 항상 false 로 들어온다(아직 안 쓰임).
+// 원본, 100/101 은 데몬이 링크단절/홈타임아웃을 감지해 합성한 코드.
+// STM 오류는 항상 name="STM_ERROR"(코드별 세부 이름 아님)로 온다.
+//
+// fatal 은 이제 데몬이 실제로 채운다(2026-08-12). 정의가 "하드웨어가
+// 고장났나" 가 아니라 **화면을 어떻게 그릴까** 라는 점에 유의:
+//     true   작업이 멈췄고 사용자가 개입해야 한다 — 배너·모달
+//            (3 NOT_HOMED / 5 STALL / 6 LIDAR / 100 안전정지 전부)
+//     false  로그 한 줄이면 된다. 계속되거나 다시 시도하면 된다
+//            (1 BAD_CRC / 2 BAD_LEN / 4 OUT_OF_RANGE)
 struct KitError {
     QString reqId;
     int     code = 0;
