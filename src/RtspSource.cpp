@@ -23,6 +23,18 @@ void RtspSource::stopAll() {
     for (auto *d : std::as_const(m_decoders)) d->stop();
     for (auto *d : std::as_const(m_decoders)) { d->wait(3000); delete d; }
     m_decoders.clear();
+    m_gaveUp.clear();
+}
+
+void RtspSource::reconnectAll() {
+    if (m_applied.isEmpty()) {
+        emit logLine("RTSP", QString::fromUtf8("설정된 카메라 채널이 없습니다 — '카메라 설정' 에서 IP 를 먼저 입력하세요."));
+        return;
+    }
+    // 돌고 있는 스트림까지 포함해 통째로 다시 연다(사용자가 명시적으로 시킨 재연결).
+    const QJsonObject cfg = m_applied;
+    m_applied = QJsonObject();
+    applyChannels(cfg, QString::fromUtf8("CCTV 재연결"));
 }
 
 void RtspSource::loadConfigAndStart(const QString &path) {
@@ -41,8 +53,10 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         return;
     }
     // retained 메시지는 재접속할 때마다 다시 온다. 같은 내용에 스트림을 끊고
-    // 다시 붙이면 화면만 깜빡이므로 그냥 무시한다.
-    if (channels == m_applied) return;
+    // 다시 붙이면 화면만 깜빡이므로 그냥 무시한다. 다만 연결을 포기한 채널이
+    // 있으면 같은 설정이라도 다시 연다 — 사용자가 '카메라 설정' 에서 값을 그대로
+    // 두고 확인만 눌렀을 때 재시도가 되게.
+    if (channels == m_applied && m_gaveUp.isEmpty()) return;
 
     const bool restarting = !m_decoders.isEmpty();
     if (restarting) {
@@ -59,6 +73,7 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         connect(dec, &RtspDecoder::frameReady, this, &RtspSource::frameReceived);
         connect(dec, &RtspDecoder::statusChanged, this, &RtspSource::channelStatusChanged);
         connect(dec, &RtspDecoder::logLine, this, &RtspSource::logLine);
+        connect(dec, &RtspDecoder::gaveUp, this, [this](int c) { m_gaveUp.insert(c); });
         m_decoders.insert(ch, dec);
         dec->start();
     }

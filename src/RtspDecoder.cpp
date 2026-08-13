@@ -12,6 +12,12 @@ namespace {
 constexpr int kReconnectDelayMs = 3000;
 constexpr int kReadTimeoutMs = 8000;
 constexpr int kMaxDecodeWidth = 960;   // 타일 표시용으로 다운스케일 (디코딩 자체는 원본 해상도로 수행)
+
+// 카메라가 없는 현장(데모/사무실)에서 8초 타임아웃 + 3초 대기를 무한히 반복하면
+// 로그가 연결 실패로 도배되고 스레드도 계속 살아 있다. 몇 번 해보고 안 되면
+// 포기하고, 사용자가 '카메라 설정' 이나 'CCTV 재연결' 로 명시적으로 다시 시킬 때만
+// 붙는다. 한 번이라도 붙었던 스트림이 끊긴 경우도 같은 횟수만큼만 재시도한다.
+constexpr int kMaxConnectAttempts = 3;
 }
 
 RtspDecoder::RtspDecoder(int channel, QString url, QObject *parent)
@@ -45,7 +51,8 @@ bool RtspDecoder::openStream() {
     if (ret < 0) {
         char buf[256];
         av_strerror(ret, buf, sizeof(buf));
-        emit logLine("RTSP", QString("CH%1 연결 실패: %2").arg(m_channel).arg(buf));
+        emit logLine("RTSP", QString("CH%1 연결 실패(%2/%3): %4")
+                                 .arg(m_channel).arg(m_attempt).arg(kMaxConnectAttempts).arg(buf));
         m_fmt = nullptr;
         return false;
     }
@@ -96,11 +103,12 @@ void RtspDecoder::closeStream() {
 }
 
 void RtspDecoder::run() {
+    int attempt = 0;   // 프레임을 한 장이라도 받으면 0 으로 되돌아간다
     while (!m_stop.load()) {
+        m_attempt = ++attempt;
         if (!openStream()) {
             emit statusChanged(m_channel, false, 0.0);
-            for (int waited = 0; waited < kReconnectDelayMs && !m_stop.load(); waited += 100)
-                QThread::msleep(100);
+            if (!waitBeforeRetry(attempt)) return;
             continue;
         }
         emit statusChanged(m_channel, true, 0.0);
@@ -109,6 +117,7 @@ void RtspDecoder::run() {
         AVFrame  *frame = av_frame_alloc();
 
         int fpsCount = 0;
+        qint64 framesTotal = 0;
         qint64 fpsWindowStart = QDateTime::currentMSecsSinceEpoch();
         bool readError = false;
 
@@ -135,6 +144,7 @@ void RtspDecoder::run() {
                         sws_scale(m_sws, frame->data, frame->linesize, 0, frame->height, dstData, dstStride);
                         emit frameReady(m_channel, img);
                         ++fpsCount;
+                        ++framesTotal;
                     }
                 }
             }
@@ -151,6 +161,28 @@ void RtspDecoder::run() {
         av_packet_free(&pkt);
         av_frame_free(&frame);
         closeStream();
-        if (!m_stop.load()) emit statusChanged(m_channel, false, 0.0);
+        if (m_stop.load()) break;
+        emit statusChanged(m_channel, false, 0.0);
+
+        // 붙기는 했는데 프레임이 한 장도 안 온 세션은 실패로 친다(그렇지 않으면
+        // open 성공 → 즉시 read 실패가 반복되며 무한 루프가 된다).
+        if (framesTotal > 0) attempt = 0;
+        else if (!waitBeforeRetry(attempt)) return;
     }
+}
+
+// 다음 시도까지 기다린다. 재시도 예산을 다 썼거나 stop() 이 걸리면 false —
+// 호출자는 run() 을 빠져나가고 스레드는 그대로 끝난다.
+bool RtspDecoder::waitBeforeRetry(int attempt) {
+    if (attempt >= kMaxConnectAttempts) {
+        emit logLine("RTSP", QString("CH%1 연결 %2회 실패 — 자동 재시도를 멈춥니다. "
+                                     "메뉴 '모드 > CCTV 재연결' 로 다시 시도하세요.")
+                                 .arg(m_channel).arg(attempt));
+        emit gaveUp(m_channel);
+        return false;
+    }
+    const int delayMs = kReconnectDelayMs * attempt;   // 3s, 6s
+    for (int waited = 0; waited < delayMs && !m_stop.load(); waited += 100)
+        QThread::msleep(100);
+    return !m_stop.load();
 }

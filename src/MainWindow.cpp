@@ -103,6 +103,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *camAction = modeMenu->addAction(QString::fromUtf8("카메라 설정…"));
     connect(camAction, &QAction::triggered, this, &MainWindow::editCameraSettings);
 
+    // RTSP 디코더는 몇 번 실패하면 자동 재시도를 멈춘다(로그 도배·헛돌기 방지).
+    // 카메라를 나중에 켰거나 네트워크가 복구되면 여기서 다시 붙인다.
+    auto *camRetryAction = modeMenu->addAction(QString::fromUtf8("CCTV 재연결"));
+    connect(camRetryAction, &QAction::triggered, this, [this] {
+        appendLog("RTSP", QString::fromUtf8("사용자 요청 — 카메라에 다시 연결합니다"));
+        m_video->reconnectAll();
+    });
+
     auto *heightAction = modeMenu->addAction(QString::fromUtf8("센서 높이 설정…"));
     connect(heightAction, &QAction::triggered, this, &MainWindow::editSensorHeight);
 
