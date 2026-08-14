@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QFrame>
 #include <QLocale>
+#include <QMouseEvent>
 
 namespace {
 QLabel *legendDot(QWidget *parent, const QColor &c) {
@@ -42,7 +43,9 @@ QVBoxLayout *statCell(QWidget *parent, const QString &label, QLabel **value) {
 
 TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     setObjectName("panel");
-    setFixedWidth(430);
+    // 폭은 대시보드 스플리터(사용자가 드래그로 조절)와 전체화면 창이 정한다.
+    // 하한만 잡아둔다 — 이보다 좁아지면 아래 범례 2행과 통계 4칸이 겹친다.
+    setMinimumWidth(360);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -91,6 +94,17 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
         hl->addWidget(b);
     }
     btn2d->setChecked(true);
+
+    // 전체화면(별도 창) 토글. 지도를 더블클릭해도 같은 동작이지만, 3D 캔버스는
+    // 더블클릭이 이미 시점 초기화라 거기서는 안 먹는다 — 그래서 버튼도 같이 둔다.
+    m_btnFull = new QPushButton(QString::fromUtf8("⛶ 전체화면"), head);
+    m_btnFull->setFixedHeight(20);
+    m_btnFull->setCursor(Qt::PointingHandCursor);
+    m_btnFull->setStyleSheet(segCss);
+    m_btnFull->setToolTip(QString::fromUtf8("별도 창에서 전체화면으로 본다 (지도 더블클릭도 같은 동작)"));
+    connect(m_btnFull, &QPushButton::clicked, this, &TopViewPanel::fullScreenToggleRequested);
+    hl->addSpacing(5);
+    hl->addWidget(m_btnFull);
 
     // 캔버스 — 2D 지도와 3D 뷰를 같은 자리에 겹쳐 두고 헤더 버튼으로 바꾼다.
     m_map = new TopViewWidget(this);
@@ -182,7 +196,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     auto *legend = new QFrame(this);
     legend->setStyleSheet(QString("background:%1;border:none;border-top:1px solid %2;")
         .arg(Theme::BarBg.name(), Theme::BorderSoft.name()));
-    // 430px 한 줄에 스와치 4종 + 점군 요약까지 넣으면 잘린다. 2행으로 나눈다.
+    // 기본 폭(430px) 한 줄에 스와치 4종 + 점군 요약까지 넣으면 잘린다. 2행으로 나눈다.
     auto *legendV = new QVBoxLayout(legend);
     legendV->setContentsMargins(11, 7, 11, 7);
     legendV->setSpacing(5);
@@ -259,9 +273,37 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     root->addWidget(legend);
     root->addWidget(stats);
 
+    // 더블클릭 = 전체화면 토글. 자식 위젯이 눌린 자리에서도 먹어야 하므로 칸별로
+    // 필터를 건다(라벨은 마우스 이벤트를 안 먹고 부모로 넘기므로 헤더/범례/통계는
+    // 프레임 하나씩이면 충분하다). 뺀 곳:
+    //   - ScanView3D  : 더블클릭이 시점 초기화 (헤더 버튼으로 대신 연다)
+    //   - 스캔 파일 목록 : 클릭 한 번이 곧 열기라 더블클릭이 겹친다
+    for (QWidget *w : {static_cast<QWidget *>(this), static_cast<QWidget *>(head),
+                       static_cast<QWidget *>(m_map), static_cast<QWidget *>(legend),
+                       static_cast<QWidget *>(stats)}) {
+        w->installEventFilter(this);
+    }
+
     setImu({});
     setDaemonState({});
     setScanProgress({});
+}
+
+bool TopViewPanel::eventFilter(QObject *watched, QEvent *ev) {
+    if (ev->type() == QEvent::MouseButtonDblClick
+        && static_cast<QMouseEvent *>(ev)->button() == Qt::LeftButton) {
+        emit fullScreenToggleRequested();
+        return true;
+    }
+    return QFrame::eventFilter(watched, ev);
+}
+
+void TopViewPanel::setDetached(bool detached) {
+    m_btnFull->setText(detached ? QString::fromUtf8("⛶ 창 닫기")
+                                : QString::fromUtf8("⛶ 전체화면"));
+    m_btnFull->setToolTip(detached
+        ? QString::fromUtf8("대시보드로 되돌린다 (Esc · 지도 더블클릭도 같은 동작)")
+        : QString::fromUtf8("별도 창에서 전체화면으로 본다 (지도 더블클릭도 같은 동작)"));
 }
 
 void TopViewPanel::setRoomSize(double w, double d) { m_map->setRoomSize(w, d); }

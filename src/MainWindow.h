@@ -18,11 +18,18 @@ class DemoBridge;
 class RtspSource;
 class ScanFetcher;
 class QTabWidget;
+class QSplitter;
+class QLabel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+
+protected:
+    // 전체화면으로 뺀 TOP-VIEW 창이 닫힐 때(Cmd+W·창 닫기) 패널을 되찾아온다.
+    // 안 그러면 패널이 그대로 삭제돼 대시보드 우측이 빈 채로 남는다.
+    bool eventFilter(QObject *watched, QEvent *ev) override;
 
 private:
     QWidget *buildDashboardTab();
@@ -40,6 +47,12 @@ private:
     // 지면→라이다 회전축 높이. 설치할 때 한 번 실측해 넣는 값이라 메뉴에 둔다.
     void editSensorHeight();
     void appendLog(const QString &tag, const QString &msg);
+    // TOP-VIEW 를 별도 창(전체화면)으로 빼거나 대시보드로 되돌린다. 패널을 복제
+    // 하지 않고 위젯 자체를 옮긴다 — 두 벌이면 스캔 점군·IMU 배선을 이중으로
+    // 유지해야 하고, 어느 쪽이 최신인지 헷갈린다.
+    void toggleTopViewFullScreen();
+    void detachTopView();
+    void attachTopView();
     // 스캔 완료(state/scan) 시 .pcd 를 받아 Top-View 에 깔기까지의 배선.
     void configureScanFetcher();
     void openScanFile();
@@ -52,6 +65,15 @@ private:
     DevicesTab     *m_devicesTab= nullptr;
     EventLogTab    *m_eventsTab = nullptr;
     CameraTile     *m_tiles[4]  = {nullptr, nullptr, nullptr, nullptr};
+
+    // 대시보드 좌(CCTV 4채널)/우(TOP-VIEW) 분할. 사용자가 핸들을 끌어 비율을
+    // 바꾸고, 그 비율은 QSettings 에 남겨 재실행·테마 전환에도 유지된다.
+    QSplitter *m_dashSplitter = nullptr;
+    QByteArray m_splitterState;
+    // TOP-VIEW 가 별도 창에 나가 있는 동안 스플리터 자리를 지키는 안내 라벨.
+    // 비워두면 스플리터가 좌측 칸을 폭 전체로 늘려서 되돌릴 때 비율이 깨진다.
+    QWidget *m_topViewWindow = nullptr;
+    QLabel  *m_topViewSlot   = nullptr;
 
     MqttBridge *m_mqtt = nullptr;
     DemoBridge *m_demo = nullptr;

@@ -32,9 +32,20 @@ public:
     void setScanList(const QVector<ScanEntry> &entries, const QString &note);
     void showScanList();      // 목록 화면으로
 
+    // 별도 창(전체화면)으로 빠져 있는지. 헤더 버튼 라벨을 상태에 맞춘다.
+    void setDetached(bool detached);
+
 signals:
     void refreshRequested();
     void scanChosen(const QString &name, const QString &localPath);
+    // 헤더의 전체화면 버튼, 또는 지도/헤더/통계바 더블클릭. MainWindow 가 이
+    // 패널을 별도 창으로 빼거나 대시보드로 되돌린다.
+    void fullScreenToggleRequested();
+
+protected:
+    // 더블클릭을 자식 위젯들에서 주워 담는다. 3D 캔버스(ScanView3D)는 더블클릭이
+    // 이미 시점 초기화라 일부러 뺐다 — 아래 installEventFilter 목록 참고.
+    bool eventFilter(QObject *watched, QEvent *ev) override;
 
 private:
     TopViewWidget *m_map;
@@ -44,7 +55,7 @@ private:
     QListWidget *m_list;
     QLabel *m_listNote;
     QLabel *m_viewTitle;
-    QPushButton *m_btn2d, *m_btn3d;
+    QPushButton *m_btn2d, *m_btn3d, *m_btnFull;
     QStackedWidget *m_stack;
     QLabel *m_scanSummary;
     QLabel *m_roll, *m_pitch, *m_scanPts, *m_expected;

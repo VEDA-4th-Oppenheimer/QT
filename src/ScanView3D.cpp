@@ -171,17 +171,30 @@ void ScanView3D::initializeGL() {
     initializeOpenGLFunctions();
     m_glReady = true;
 
-    if (!m_prog.addShaderFromSourceCode(QOpenGLShader::Vertex, kVert) ||
-        !m_prog.addShaderFromSourceCode(QOpenGLShader::Fragment, kFrag) ||
-        !m_prog.link()) {
-        qWarning("ScanView3D: 셰이더 준비 실패 — %s", qPrintable(m_prog.log()));
+    // 이 함수는 한 번만 도는 게 아니다 — 위젯이 다른 창으로 옮겨가면(TOP-VIEW
+    // 전체화면) 이전 GL 컨텍스트가 버려지고 새 컨텍스트로 다시 불린다. 셰이더
+    // 프로그램은 만들어진 컨텍스트에 묶여 있어서 재사용하면
+    // "Program and shader are not associated with same context" 로 링크가 깨지고
+    // (그냥 다시 add 하면 vertex/fragment 가 두 벌 붙어 "duplicate definition of
+    // function 'main'" 이 된다) 3D 뷰가 빈 화면이 된다. 컨텍스트마다 새로 만든다.
+    m_prog = std::make_unique<QOpenGLShaderProgram>();
+    m_lineProg = std::make_unique<QOpenGLShaderProgram>();
+    // 버퍼도 같은 이유로 갈아끼운다. 점군 원본은 m_pending 에 남아 있어서
+    // 아래 m_dirty = true 로 다음 paintGL 때 새 버퍼에 다시 올라간다.
+    if (m_vbo.isCreated()) m_vbo.destroy();
+    if (m_gridVbo.isCreated()) m_gridVbo.destroy();
+
+    if (!m_prog->addShaderFromSourceCode(QOpenGLShader::Vertex, kVert) ||
+        !m_prog->addShaderFromSourceCode(QOpenGLShader::Fragment, kFrag) ||
+        !m_prog->link()) {
+        qWarning("ScanView3D: 셰이더 준비 실패 — %s", qPrintable(m_prog->log()));
         return;
     }
 
-    if (!m_lineProg.addShaderFromSourceCode(QOpenGLShader::Vertex, kLineVert) ||
-        !m_lineProg.addShaderFromSourceCode(QOpenGLShader::Fragment, kLineFrag) ||
-        !m_lineProg.link()) {
-        qWarning("ScanView3D: 라인 셰이더 준비 실패 — %s", qPrintable(m_lineProg.log()));
+    if (!m_lineProg->addShaderFromSourceCode(QOpenGLShader::Vertex, kLineVert) ||
+        !m_lineProg->addShaderFromSourceCode(QOpenGLShader::Fragment, kLineFrag) ||
+        !m_lineProg->link()) {
+        qWarning("ScanView3D: 라인 셰이더 준비 실패 — %s", qPrintable(m_lineProg->log()));
     }
 
     m_vbo.create();
@@ -247,7 +260,7 @@ void ScanView3D::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     uploadCloud();
-    if (m_count > 0 && m_prog.isLinked()) {
+    if (m_count > 0 && m_prog->isLinked()) {
         const float a = qDegreesToRadians(m_az), e = qDegreesToRadians(m_el);
         const float ce = std::cos(e);
         const QVector3D eye = m_target + QVector3D(m_radius * ce * std::sin(a),
@@ -257,43 +270,43 @@ void ScanView3D::paintGL() {
         mv.lookAt(eye, m_target, QVector3D(0, 1, 0));
         proj.perspective(50.0f, width() / static_cast<float>(qMax(1, height())), 0.05f, 200.0f);
 
-        if (m_gridCount > 0 && m_lineProg.isLinked()) {
-            m_lineProg.bind();
-            m_lineProg.setUniformValue("uMVP", proj * mv);
+        if (m_gridCount > 0 && m_lineProg->isLinked()) {
+            m_lineProg->bind();
+            m_lineProg->setUniformValue("uMVP", proj * mv);
             const QColor gc = Theme::Grid;
-            m_lineProg.setUniformValue("uColor", QVector4D(gc.redF(), gc.greenF(), gc.blueF(), 1.0f));
+            m_lineProg->setUniformValue("uColor", QVector4D(gc.redF(), gc.greenF(), gc.blueF(), 1.0f));
             m_gridVbo.bind();
-            const int lp = m_lineProg.attributeLocation("aPos");
-            m_lineProg.enableAttributeArray(lp);
-            m_lineProg.setAttributeBuffer(lp, GL_FLOAT, 0, 3, 3 * sizeof(float));
+            const int lp = m_lineProg->attributeLocation("aPos");
+            m_lineProg->enableAttributeArray(lp);
+            m_lineProg->setAttributeBuffer(lp, GL_FLOAT, 0, 3, 3 * sizeof(float));
             glDrawArrays(GL_LINES, 0, m_gridCount);
-            m_lineProg.disableAttributeArray(lp);
+            m_lineProg->disableAttributeArray(lp);
             m_gridVbo.release();
-            m_lineProg.release();
+            m_lineProg->release();
         }
 
-        m_prog.bind();
-        m_prog.setUniformValue("uMV", mv);
-        m_prog.setUniformValue("uProj", proj);
-        m_prog.setUniformValue("uSize", kPointSize * static_cast<float>(devicePixelRatioF()));
+        m_prog->bind();
+        m_prog->setUniformValue("uMV", mv);
+        m_prog->setUniformValue("uProj", proj);
+        m_prog->setUniformValue("uSize", kPointSize * static_cast<float>(devicePixelRatioF()));
         const Ramp r = rampFor(dark);
         const char *names[5] = {"uR0", "uR1", "uR2", "uR3", "uR4"};
         for (int i = 0; i < 5; ++i) {
-            m_prog.setUniformValue(names[i], QVector3D(r.v[i][0], r.v[i][1], r.v[i][2]));
+            m_prog->setUniformValue(names[i], QVector3D(r.v[i][0], r.v[i][1], r.v[i][2]));
         }
 
         m_vbo.bind();
-        const int locPos = m_prog.attributeLocation("aPos");
-        const int locT   = m_prog.attributeLocation("aT");
-        m_prog.enableAttributeArray(locPos);
-        m_prog.setAttributeBuffer(locPos, GL_FLOAT, 0, 3, 4 * sizeof(float));
-        m_prog.enableAttributeArray(locT);
-        m_prog.setAttributeBuffer(locT, GL_FLOAT, 3 * sizeof(float), 1, 4 * sizeof(float));
+        const int locPos = m_prog->attributeLocation("aPos");
+        const int locT   = m_prog->attributeLocation("aT");
+        m_prog->enableAttributeArray(locPos);
+        m_prog->setAttributeBuffer(locPos, GL_FLOAT, 0, 3, 4 * sizeof(float));
+        m_prog->enableAttributeArray(locT);
+        m_prog->setAttributeBuffer(locT, GL_FLOAT, 3 * sizeof(float), 1, 4 * sizeof(float));
         glDrawArrays(GL_POINTS, 0, m_count);
-        m_prog.disableAttributeArray(locPos);
-        m_prog.disableAttributeArray(locT);
+        m_prog->disableAttributeArray(locPos);
+        m_prog->disableAttributeArray(locT);
         m_vbo.release();
-        m_prog.release();
+        m_prog->release();
     }
 
     drawOverlay();

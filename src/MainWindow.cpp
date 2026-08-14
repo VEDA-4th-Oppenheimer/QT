@@ -20,6 +20,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
+#include <QSplitter>
+#include <QShortcut>
 #include <QTabWidget>
 #include <QMenuBar>
 #include <QMenu>
@@ -111,6 +113,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         m_video->reconnectAll();
     });
 
+    // 지도 더블클릭·헤더 버튼과 같은 동작. 메뉴에도 둬야 단축키가 붙고, 패널이
+    // 별도 창에 나가 있을 때 본창에서 되돌릴 방법이 생긴다.
+    auto *fullTopViewAction = modeMenu->addAction(QString::fromUtf8("TOP-VIEW 전체화면 켜기/끄기"));
+    fullTopViewAction->setShortcut(QKeySequence::FullScreen);
+    connect(fullTopViewAction, &QAction::triggered, this, &MainWindow::toggleTopViewFullScreen);
+
     auto *heightAction = modeMenu->addAction(QString::fromUtf8("센서 높이 설정…"));
     connect(heightAction, &QAction::triggered, this, &MainWindow::editSensorHeight);
 
@@ -158,6 +166,10 @@ void MainWindow::setThemeMode(Theme::Mode mode) {
 
 void MainWindow::rebuildUi() {
     setStyleSheet(Theme::appStyleSheet());
+
+    // 아래에서 중앙 위젯을 통째로 지운다. TOP-VIEW 가 별도 창에 나가 있으면 그
+    // 패널만 중앙 위젯 밖에 살아남아 유령 창이 되므로, 먼저 제자리로 돌려놓는다.
+    attachTopView();
 
     // m_mqtt/m_demo/m_video 는 MainWindow 소유라 테마 전환으로 중앙 위젯이
     // 통째로 바뀌어도 살아남는다 — 그래서 아래에서 이 객체들을 this(MainWindow)
@@ -337,7 +349,7 @@ QWidget *MainWindow::buildDashboardTab() {
     auto *page = new QWidget;
     auto *l = new QHBoxLayout(page);
     l->setContentsMargins(10, 10, 10, 10);
-    l->setSpacing(10);
+    l->setSpacing(0);   // 좌우 간격은 스플리터 핸들이 만든다
 
     // 좌: 2x2 CCTV 그리드. PNM-C16083RVQ 멀티센서 카메라 4채널, RTSP 직결(RtspSource) —
     // config/cameras.json 채널별 sensor 0~3 = /profile2/media.smp. MVP는 대표 1채널(CH1)
@@ -348,17 +360,123 @@ QWidget *MainWindow::buildDashboardTab() {
         {3, QString::fromUtf8("남측 (180°) · 출입문"),    "RTSP CH3 · sensor 2", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
         {4, QString::fromUtf8("서측 (270°) · 기둥/복도"), "RTSP CH4 · sensor 3", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
     };
-    auto *grid = new QGridLayout;
+    auto *camPane = new QWidget(page);
+    auto *grid = new QGridLayout(camPane);
+    grid->setContentsMargins(0, 0, 0, 0);
     grid->setSpacing(10);
     for (int i = 0; i < 4; ++i) {
-        m_tiles[i] = new CameraTile(defs[i], page);
+        m_tiles[i] = new CameraTile(defs[i], camPane);
         grid->addWidget(m_tiles[i], i / 2, i % 2);
     }
-    l->addLayout(grid, 1);
+    // 2x2 그리드가 이보다 좁아지면 타일 안 라벨이 겹친다. 스플리터가 이 값
+    // 아래로는 못 끌게 막아준다(TOP-VIEW 쪽은 자기 minimumWidth 로 버틴다).
+    camPane->setMinimumWidth(520);
 
     m_topView = new TopViewPanel(page);
-    l->addWidget(m_topView);
+    connect(m_topView, &TopViewPanel::fullScreenToggleRequested,
+            this, &MainWindow::toggleTopViewFullScreen);
+
+    // 좌(CCTV)/우(TOP-VIEW) 비율을 사용자가 정한다. 현장마다 무엇을 크게 볼지가
+    // 달라서(영상 감시 위주 / 스캔 확인 위주) 고정 430px 로는 늘 누군가 손해였다.
+    m_dashSplitter = new QSplitter(Qt::Horizontal, page);
+    m_dashSplitter->setChildrenCollapsible(false);   // 한쪽을 0 으로 접어버리면 되돌리기 어렵다
+    m_dashSplitter->setHandleWidth(10);
+    m_dashSplitter->setStyleSheet(QString(
+        "QSplitter::handle:horizontal { background:transparent;"
+        " border-left:4px solid transparent; border-right:4px solid transparent; }"
+        "QSplitter::handle:horizontal { image:none; }"
+        "QSplitter::handle:horizontal:hover { background:%1; }"
+        "QSplitter::handle:horizontal:pressed { background:%2; }")
+        .arg(Theme::BorderSoft.name(), Theme::Accent.name()));
+    m_dashSplitter->addWidget(camPane);
+    m_dashSplitter->addWidget(m_topView);
+    // 창을 키우면 늘어나는 쪽은 CCTV 다 — TOP-VIEW 는 수치 패널이라 넓어져도
+    // 얻는 게 적다. 사용자가 끈 비율은 아래 restoreState 가 그대로 되살린다.
+    m_dashSplitter->setStretchFactor(0, 1);
+    m_dashSplitter->setStretchFactor(1, 0);
+    l->addWidget(m_dashSplitter);
+
+    if (m_splitterState.isEmpty()) {
+        m_splitterState = QSettings().value(QStringLiteral("dashboard/splitter")).toByteArray();
+    }
+    if (!m_dashSplitter->restoreState(m_splitterState)) {
+        m_dashSplitter->setSizes({760, 430});   // 종전 고정 폭과 같은 초기 비율
+    }
+    connect(m_dashSplitter, &QSplitter::splitterMoved, this, [this](int, int) {
+        m_splitterState = m_dashSplitter->saveState();
+        QSettings().setValue(QStringLiteral("dashboard/splitter"), m_splitterState);
+    });
     return page;
+}
+
+void MainWindow::toggleTopViewFullScreen() {
+    if (m_topViewWindow != nullptr) attachTopView();
+    else                            detachTopView();
+}
+
+void MainWindow::detachTopView() {
+    if (m_topViewWindow != nullptr || m_topView == nullptr || m_dashSplitter == nullptr) return;
+
+    m_splitterState = m_dashSplitter->saveState();
+    const int idx = m_dashSplitter->indexOf(m_topView);
+
+    m_topViewSlot = new QLabel(QString::fromUtf8(
+        "TOP-VIEW 를 별도 창에서 보는 중입니다.\n\n그 창에서 Esc 를 누르거나\n"
+        "지도를 더블클릭하면 이 자리로 돌아옵니다."), m_dashSplitter);
+    m_topViewSlot->setAlignment(Qt::AlignCenter);
+    m_topViewSlot->setWordWrap(true);
+    m_topViewSlot->setStyleSheet(Theme::mono(11) + QString("color:%1;background:%2;"
+        "border:1px dashed %3;border-radius:5px;")
+        .arg(Theme::TextFaint.name(), Theme::Panel.name(), Theme::Border.name()));
+    m_dashSplitter->insertWidget(idx, m_topViewSlot);
+
+    auto *win = new QWidget(this, Qt::Window);
+    win->setWindowTitle(QString::fromUtf8("SPATIAL·VMS — TOP-VIEW"));
+    auto *wl = new QVBoxLayout(win);
+    wl->setContentsMargins(0, 0, 0, 0);
+    wl->addWidget(m_topView);          // 여기서 패널이 창으로 옮겨간다(reparent)
+    m_topView->show();
+    m_topView->setDetached(true);
+
+    // Esc 로 되돌린다 — 전체화면에는 타이틀바가 없어서 닫을 방법이 헤더 버튼밖에
+    // 없기 때문이다(macOS 전체화면에서는 창 닫기 버튼도 안 보인다).
+    auto *esc = new QShortcut(QKeySequence(Qt::Key_Escape), win);
+    connect(esc, &QShortcut::activated, this, &MainWindow::attachTopView);
+    win->installEventFilter(this);
+
+    m_topViewWindow = win;
+    win->showFullScreen();
+    // showFullScreen 만으로는 본창 뒤에 깔린 채로 떴다(macOS). 명시적으로 올린다.
+    win->raise();
+    win->activateWindow();
+}
+
+void MainWindow::attachTopView() {
+    if (m_topViewWindow == nullptr) return;
+
+    QWidget *win = m_topViewWindow;
+    m_topViewWindow = nullptr;           // 재진입(창 close 이벤트 -> 여기) 차단
+    win->removeEventFilter(this);
+
+    if (m_topView != nullptr && m_dashSplitter != nullptr && m_topViewSlot != nullptr) {
+        const int idx = m_dashSplitter->indexOf(m_topViewSlot);
+        m_dashSplitter->insertWidget(idx, m_topView);
+        m_topView->show();
+        m_topView->setDetached(false);
+        delete m_topViewSlot;
+        m_topViewSlot = nullptr;
+        m_dashSplitter->restoreState(m_splitterState);
+    }
+    // 자기 close 이벤트 처리 중에 불릴 수 있어 즉시 delete 하지 않는다.
+    win->deleteLater();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *ev) {
+    if (watched == m_topViewWindow && ev->type() == QEvent::Close) {
+        attachTopView();
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, ev);
 }
 
 bool MainWindow::ensureConfigured() {

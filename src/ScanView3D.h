@@ -4,6 +4,7 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLWidget>
 #include <QPoint>
+#include <memory>
 #include "ScanCloud.h"
 
 // 스캔 포인트클라우드 3D 뷰.
@@ -43,8 +44,10 @@ private:
     void buildGrid();
     void drawOverlay();
 
-    QOpenGLShaderProgram m_prog;
-    QOpenGLShaderProgram m_lineProg;
+    // 컨텍스트마다 새로 만든다 — 위젯이 다른 창으로 옮겨가면 GL 컨텍스트가
+    // 바뀌는데, 셰이더 프로그램은 만들어진 컨텍스트에 묶여 있다(initializeGL 주석).
+    std::unique_ptr<QOpenGLShaderProgram> m_prog{new QOpenGLShaderProgram};
+    std::unique_ptr<QOpenGLShaderProgram> m_lineProg{new QOpenGLShaderProgram};
     QOpenGLBuffer m_vbo{QOpenGLBuffer::VertexBuffer};
     QOpenGLBuffer m_gridVbo{QOpenGLBuffer::VertexBuffer};
     int m_gridCount = 0;
