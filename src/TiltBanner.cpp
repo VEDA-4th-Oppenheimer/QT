@@ -47,7 +47,7 @@ void TiltBanner::update(const ImuState &imu, double tolDeg) {
     if (m_wasLevel) emit tiltOnset(imu);
     m_wasLevel = false;
 
-    m_detail->setText(QString::fromUtf8("MPU6050 기준 Roll %1° / Pitch %2° (허용 ±%3°). "
+    m_detail->setText(QString::fromUtf8("Roll %1° / Pitch %2° (허용 ±%3°). "
                               "킷을 재설치한 뒤 칼리브레이션을 다시 시작하세요.")
                           .arg(imu.roll, 0, 'f', 1).arg(imu.pitch, 0, 'f', 1).arg(tolDeg, 0, 'f', 1));
     show();

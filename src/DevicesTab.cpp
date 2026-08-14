@@ -53,7 +53,7 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     auto *cards = new QGridLayout;
     cards->setSpacing(10);
 
-    cards->addWidget(deviceCard(this, "MPU6050", QString::fromUtf8("수평 게이트 판정 (/dev/imu, I²C)"),
+    cards->addWidget(deviceCard(this, "IMU", QString::fromUtf8("수평 게이트 판정 (/dev/imu, I²C)"),
                                  &m_mpuDot, &m_mpuValue), 0, 0);
     cards->addWidget(deviceCard(this, "TOFSense-F2D", QString::fromUtf8("1D LiDAR · pan-tilt 격자 스캔 (100 Hz)"),
                                  &m_tofDot, &m_tofValue), 0, 1);

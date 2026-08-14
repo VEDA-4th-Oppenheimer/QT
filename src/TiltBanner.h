@@ -4,7 +4,7 @@
 
 class QLabel;
 
-// MPU6050 수평 이탈 시 상단에 노출되는 재설치 안내 배너
+// IMU 수평 이탈 시 상단에 노출되는 재설치 안내 배너
 class TiltBanner : public QFrame {
     Q_OBJECT
 public:
