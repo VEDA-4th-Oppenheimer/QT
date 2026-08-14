@@ -354,11 +354,15 @@ QWidget *MainWindow::buildDashboardTab() {
     // 좌: 2x2 CCTV 그리드. PNM-C16083RVQ 멀티센서 카메라 4채널, RTSP 직결(RtspSource) —
     // config/cameras.json 채널별 sensor 0~3 = /profile2/media.smp. MVP는 대표 1채널(CH1)
     // 기준이지만 하드웨어가 4채널을 모두 지원해 나머지도 함께 보여준다.
+    // 타일 헤더에는 채널 번호만 쓴다. 예전에는 "북측 (0°) · 창측 벽면" 같은 설치
+    // 위치 설명이 붙어 있었는데, 이건 시안용으로 지어낸 문구라 실제 카메라가 어디를
+    // 보는지와 무관하다 — 화면에 있으면 사실로 읽히므로 뺀다(IMU 모델명을 뺀 것과
+    // 같은 이유). 방위가 필요해지면 설치할 때 입력받아 채울 자리다.
     const ChannelState defs[4] = {
-        {1, QString::fromUtf8("북측 (0°) · 창측 벽면"),   "RTSP CH1 · sensor 0", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
-        {2, QString::fromUtf8("동측 (90°) · 회의 구역"),  "RTSP CH2 · sensor 1", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
-        {3, QString::fromUtf8("남측 (180°) · 출입문"),    "RTSP CH3 · sensor 2", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
-        {4, QString::fromUtf8("서측 (270°) · 기둥/복도"), "RTSP CH4 · sensor 3", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {1, QString(), "RTSP CH1 · sensor 0", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {2, QString(), "RTSP CH2 · sensor 1", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {3, QString(), "RTSP CH3 · sensor 2", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
+        {4, QString(), "RTSP CH4 · sensor 3", false, 0, QString::fromUtf8("PNM-C16083RVQ · profile2")},
     };
     auto *camPane = new QWidget(page);
     auto *grid = new QGridLayout(camPane);

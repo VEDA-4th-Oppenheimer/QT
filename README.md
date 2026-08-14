@@ -140,8 +140,8 @@ cmake --build build
 ./build/spatial_vms.app/Contents/MacOS/spatial_vms   # macOS
 ```
 
-Windows 는 의존성 설치 방법이 달라 아래 [배포용 패키징 → Windows](#windows-빌드실행-검증-완료--패키징은-미검증)
-절의 vcpkg 절차를 따른다.
+Windows 는 의존성 설치 방법이 달라 아래 **배포용 패키징 → Windows** 절의 vcpkg 절차를
+따른다.
 
 개발 트리에서는 등록 마법사를 거치지 않고 **프로젝트 안의 설정 파일**을 그대로 쓴다.
 example 을 복사해 실제 값을 채운다 (둘 다 gitignore 대상 — 절대 커밋하지 말 것).
@@ -269,11 +269,10 @@ Homebrew가 전혀 없는 macOS에서도 이 `.dmg`를 열어 `.app`을 `Applica
 > 는 실행파일 주변을 사용자 데이터 디렉터리보다 먼저 보기 때문에, 빈 `certs/` 가
 > 발급받아 둔 인증서를 가려 MQTT 가 조용히 평문으로 degrade 된다.
 
-### Windows (빌드·실행 검증 완료 / 패키징은 미검증)
+### Windows (검증 완료 — 2026-08-14)
 
-vcpkg + Visual Studio 2022(MSVC, x64) 조합으로 **빌드와 실행까지 확인**했다
-(2026-08-05). 아래 절차 그대로 하면 된다. 다만 `scripts/package_windows.ps1`
-(DLL 수집 + zip)은 아직 돌려보지 못했다.
+vcpkg + Visual Studio 2022(MSVC, x64) 조합으로 **빌드·실행**(2026-08-05)에 이어
+**패키징과 타 PC 실행까지 확인**했다(2026-08-14). 아래 절차 그대로 하면 된다.
 
 **1) vcpkg 설치 (1회)**
 
@@ -316,13 +315,18 @@ cmake --build build --config Release
 > unresolved external symbol 로 링크가 깨진다. 반대로 static 트리플릿
 > (`x64-windows-static`)으로 바꾸면 이 정의를 빼야 한다.
 
-**4) 패키징 (아직 검증 못 함)**
+**4) 패키징**
 
 ```powershell
-.\scripts\package_windows.ps1
-# DLL 을 자동으로 못 찾으면 경로를 직접 준다:
 .\scripts\package_windows.ps1 -ExtraDllDirs "C:\vcpkg\installed\x64-windows\bin"
 ```
+
+> ⚠️ **vcpkg 로 빌드했다면 `-ExtraDllDirs` 를 반드시 붙인다.** 스크립트는 DLL 을
+> `-ExtraDllDirs` → 실행파일 폴더 → `PATH` 순으로 찾는데, vcpkg 의
+> `installed\x64-windows\bin` 은 PATH 에 등록되지 않아 인자 없이 돌리면 Paho/FFmpeg/
+> OpenSSL DLL 을 못 찾는다. 이때 스크립트는 **중단하지 않고 경고만 남긴 채 zip 을
+> 만들기 때문에**, 그 zip 은 다른 PC 에서 실행 직후 DLL 오류로 죽는다. 실제 검증에서도
+> 이 인자가 필요했다. 마지막 경고 목록이 비어 있는지 꼭 확인할 것.
 
 `scripts/package_windows.ps1`이 하는 일:
 
@@ -338,6 +342,11 @@ cmake --build build --config Release
 
 압축을 풀어 `spatial_vms.exe` 를 실행하면 등록 화면이 뜬다. 설치 프로그램
 (Inno Setup 등)은 아직 없다 — zip 배포로도 동작하므로 우선순위를 낮췄다.
+
+**검증 결과 (2026-08-14)**: `-ExtraDllDirs` 로 vcpkg `bin` 을 지정해 zip 을 만들고,
+Qt/FFmpeg/Paho 가 설치되지 않은 다른 PC 에서 압축을 풀어 실행하는 것까지 확인했다.
+아직 안 해 본 것은 **그 PC 에서 등록 마법사로 실제 발급까지 받아보는 것** — 발급
+서비스(`/enroll`)가 아직 안 떠 있어서다(아래 TODO 2-1).
 
 ## 스캔 포인트클라우드 (Top-View)
 
@@ -471,7 +480,7 @@ resources/
 
 scripts/
 ├── package_macos.sh           # .app 번들링 + .dmg (2026-08-14 재확인)
-└── package_windows.ps1        # DLL 수집 + zip (미검증)
+└── package_windows.ps1        # DLL 수집 + zip (2026-08-14 검증, vcpkg 는 -ExtraDllDirs 필요)
 ```
 
 ## 남은 TODO
@@ -481,9 +490,10 @@ scripts/
    `state/daemon` 하트비트·IMU 수신). 토픽은 계약서가 아닌 데몬 실구현 기준.
 2-1. **발급 서버(`/enroll`) 미구현** — 클라이언트는 위 계약대로 준비돼 있다.
    RPi 쪽 서비스가 뜨면 실제 발급까지 연결해 확인해야 한다. (담당: 송영빈)
-2-2. Windows 빌드·실행은 확인 완료(vcpkg + MSVC 2022). 남은 건
-   `scripts/package_windows.ps1` — 아직 한 번도 실행하지 못했다. Windows 머신에서
-   1회 돌려 zip 이 실제로 다른 PC 에서 뜨는지까지 봐야 한다.
+2-2. ~~Windows 패키징~~ — 완료(2026-08-14). `package_windows.ps1` 로 zip 을 만들어
+   의존성 없는 다른 PC 에서 실행까지 확인했다. vcpkg 빌드에서는 `-ExtraDllDirs` 가
+   필요하다(위 4단계 경고 참고). 남은 건 그 PC 에서 등록 마법사로 실제 발급을 받아보는
+   것으로, 2-1 이 풀려야 가능하다.
 4. 카메라 단 캘리브 결과(NCC/edge_rmse/extrinsic) 표시 — 발행 토픽이 아직 없다
    (이영민 협의, 참고문서 3번 §9). 토픽이 정해지면 CALIBRATION 탭에 QUALITY
    패널을 추가한다.

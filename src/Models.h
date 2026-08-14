@@ -8,7 +8,9 @@
 
 struct ChannelState {
     int      no        = 1;
-    QString  name;                 // "북측 (0°) · 창측 벽면"
+    QString  name;                 // 타일 헤더에 CH 번호 옆으로 붙는 이름. 지금은
+                                   // 비워 둔다(설치 위치를 지어내지 않는다) —
+                                   // MainWindow::buildDashboardTab 주석 참고.
     QString  topic;                // "cctv/ch1/h264"
     bool     online    = false;
     double   fps       = 0.0;
