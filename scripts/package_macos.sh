@@ -21,8 +21,11 @@ command -v macdeployqt >/dev/null || { echo "macdeployqt 없음 (brew install qt
 
 echo "== macdeployqt: Qt 프레임워크 + 감지된 Homebrew dylib 번들링 =="
 macdeployqt "$APP" -verbose=1 || true
-# 위 명령은 이 앱이 실제로 쓰지 않는 Qt 플러그인(QtPdf/QtSvg/QtVirtualKeyboard 의존)의
-# 프레임워크 경로를 못 찾아 ERROR를 내지만 치명적이지 않다 — 아래에서 해당 플러그인 자체를 제거한다.
+# 위 명령이 내는 ERROR 두 종류는 모두 아래 단계에서 정리되므로 무시해도 된다:
+#  - "Cannot resolve rpath @rpath/QtPdf..." (QtSvg/QtVirtualKeyboard 포함)
+#    — 이 앱이 링크하지 않는 프레임워크를 요구하는 플러그인들이다. 바로 다음에 지운다.
+#  - "codesign verification error ... In subcomponent: .../libbrotlicommon.1.dylib"
+#    — install name 을 고치면서 기존 서명이 깨진 것. 마지막에 번들 전체를 재서명한다.
 
 echo "== 미사용 플러그인 제거 (QtPdf/QtSvg/QtVirtualKeyboard 의존성 없음) =="
 PLUGINS="$APP/Contents/PlugIns"

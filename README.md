@@ -199,6 +199,12 @@ GUI `.exe`를(WIN32) 만든다 (`CMakeLists.txt` 참고). 다만 기본 빌드 �
 빌드 머신의 Homebrew 라이브러리를 동적으로 링크하고 있어 그 자체로는 배포할 수
 없다 — 아래 절차로 의존성을 번들링해야 한다.
 
+번들에 들어가는 의존성은 **Qt6 Widgets/Network/OpenGLWidgets + Paho(C·C++) +
+OpenSSL + FFmpeg(avformat/avcodec/avutil/swscale)** 이다. `OpenGLWidgets` 는 3D 스캔
+뷰(`src/ScanView3D`)를 붙이면서 늘어난 것이라, 그 이전에 만들어 둔 배포본 절차와
+비교할 때 Qt 쪽 산출물이 더 많다(`QtOpenGL`/`QtOpenGLWidgets`, 그리고 Qt 6.11 부터는
+플러그인 의존으로 `QtQml`/`QtQuick` 계열까지 딸려온다).
+
 ### 앱 아이콘
 
 `resources/AppIcon.icns`(macOS)/`resources/AppIcon.ico`(Windows) — CCTV 불릿
@@ -208,7 +214,7 @@ GUI `.exe`를(WIN32) 만든다 (`CMakeLists.txt` 참고). 다만 기본 빌드 �
 아이콘 리소스로 컴파일). 디자인을 바꾸려면 `scripts/gen_app_icon.cpp` 참고
 (사용법은 파일 상단 주석).
 
-### macOS (검증 완료)
+### macOS (검증 완료 — 2026-08-14 재확인)
 
 ```bash
 cmake -S . -B build && cmake --build build
@@ -228,11 +234,40 @@ cmake -S . -B build && cmake --build build
    `-s '<Developer ID>'`로 교체).
 5. `hdiutil`로 `build/SPATIAL-VMS.dmg` 생성.
 
-검증 방법(실제로 확인함): `env -i build/spatial_vms.app/Contents/MacOS/spatial_vms`
-— `PATH`/`HOME` 등 환경변수를 전부 지운 상태로, `/tmp`(프로젝트와 무관한 작업
-디렉터리)에서 실행해도 정상 기동하고 `config/cameras.json`을 찾는 것까지 확인.
-Homebrew가 전혀 없는 macOS에서 도 이 `.dmg`를 열어 `.app`을 `Applications`로
+**중간에 뜨는 ERROR 두 종류는 정상이다** (스크립트가 뒤에서 정리한다):
+
+- `Cannot resolve rpath "@rpath/QtPdf.framework/..."` (QtSvg/QtVirtualKeyboard 도
+  같이) — 2번에서 지우는 그 플러그인들이다.
+- `codesign verification error: ... invalid signature ... In subcomponent:
+  Frameworks/libbrotlicommon.1.dylib` — `macdeployqt` 가 dylib 의 install name 을
+  고치면서 서명이 깨진 것이다. 3번에서 id 를 다시 쓰고 4번에서 번들 전체를
+  재서명하므로 최종 산출물은 `codesign --verify --deep --strict` 를 통과한다.
+  (`install_name_tool: warning: changes ... will invalidate the code signature`
+  경고도 같은 이유다.)
+
+마지막 재확인(2026-08-14, Homebrew Qt 6.11.1 / FFmpeg 8.1.2 / OpenSSL 3.6.3) 결과:
+
+- 번들 안 Mach-O 전체에서 `/opt/homebrew`·`/usr/local` 잔여 참조 **0건**.
+- `spatial_vms.app` 115MB, `SPATIAL-VMS.dmg` 52MB.
+- 번들에 `.key`/`.crt`/`.pem`·`mqtt.json`·`cameras.json` 이 하나도 안 들어간다
+  (Windows 쪽과 달리 macOS 스크립트에는 자동 검사가 없다 — `config/`·`certs/` 를
+  번들 리소스로 넣는 CMake 규칙 자체가 없어서 구조적으로 섞이지 않는다).
+- `cd /tmp && env -i .../Contents/MacOS/spatial_vms` — 환경변수를 전부 지우고
+  프로젝트와 무관한 디렉터리에서 실행해도 정상 기동.
+
+Homebrew가 전혀 없는 macOS에서도 이 `.dmg`를 열어 `.app`을 `Applications`로
 드래그하면 바로 쓸 수 있다.
+
+> ⚠️ **개발 머신에서의 `env -i` 실행은 "설정 없는 새 PC" 검증이 아니다.**
+> `HOME` 을 지워도 Qt 는 `getpwuid` 로 사용자 데이터 디렉터리를 찾아내므로,
+> 이미 등록을 해 본 개발 머신에서는 `~/Library/Application Support/VEDA4th/
+> SPATIAL-VMS/{config,certs}` 를 그대로 읽는다(위 실행에서도 실제 카메라로 RTSP 를
+> 걸었다). 등록 마법사부터의 신규 사용자 흐름을 보려면 그 폴더를 잠시 다른 이름으로
+> 옮겨두고 실행할 것.
+>
+> 같은 이유로 **빈 `certs/` 폴더를 배포본 옆에 두면 안 된다.** `resolveConfigPath`
+> 는 실행파일 주변을 사용자 데이터 디렉터리보다 먼저 보기 때문에, 빈 `certs/` 가
+> 발급받아 둔 인증서를 가려 MQTT 가 조용히 평문으로 degrade 된다.
 
 ### Windows (빌드·실행 검증 완료 / 패키징은 미검증)
 
@@ -253,9 +288,12 @@ C:\vcpkg\bootstrap-vcpkg.bat
 **2) 의존성 설치**
 
 ```powershell
-C:\vcpkg\vcpkg.exe install qtbase[widgets] ffmpeg[avcodec,avformat,swscale] openssl paho-mqttcpp --triplet x64-windows
+C:\vcpkg\vcpkg.exe install qtbase[widgets,opengl] ffmpeg[avcodec,avformat,swscale] openssl paho-mqttcpp --triplet x64-windows
 ```
 
+- `opengl` 은 3D 스캔 뷰가 쓰는 `Qt6::OpenGLWidgets` 때문에 필요하다. vcpkg `qtbase`
+  의 기본 feature 라 예전처럼 `qtbase[widgets]` 로 깔아도 결과는 같지만, 이 앱이
+  OpenGL 을 링크한다는 걸 드러내려고 명시했다.
 - Qt 도 **vcpkg 의 `qtbase`** 를 그대로 썼다 — 그래서 configure 에 `CMAKE_PREFIX_PATH`
   가 필요 없다. 대신 qtbase 는 소스 빌드라 처음 한 번은 시간이 오래 걸린다. 공식 Qt
   설치 관리자로 받은 Qt 를 쓰려면 configure 에
@@ -288,9 +326,11 @@ cmake --build build --config Release
 
 `scripts/package_windows.ps1`이 하는 일:
 
-1. `windeployqt --release --compiler-runtime` 으로 Qt DLL·플러그인·MSVC 런타임 수집.
+1. `windeployqt --release --compiler-runtime` 으로 Qt DLL·플러그인·MSVC 런타임 수집
+   (`Qt6OpenGL*.dll` 도 여기서 따라온다 — 별도로 챙길 필요 없다).
 2. `windeployqt` 가 모르는 **Paho / FFmpeg / OpenSSL** DLL 을 와일드카드로 찾아 복사
-   (`avcodec-61.dll` 처럼 버전이 파일명에 붙기 때문). 못 찾으면 목록을 경고로 알린다.
+   (`avcodec-62.dll` 처럼 버전이 파일명에 붙고, 그 번호는 vcpkg 가 받아온 FFmpeg
+   버전마다 달라지기 때문). 못 찾으면 목록을 경고로 알린다.
 3. **비밀정보 혼입 검사** — 스테이징에 `.key`/`.crt`/`.pem` 이나 `mqtt.json`/
    `cameras.json` 이 들어 있으면 중단한다. 배포본에 인증서를 담으면 받은 사람
    전원이 장비 명령 권한(`adts/cmd/#` 쓰기)과 카메라 admin 비밀번호를 갖게 된다.
@@ -430,7 +470,7 @@ resources/
 └── AppIcon.icns / AppIcon.ico / app.rc
 
 scripts/
-├── package_macos.sh           # .app 번들링 + .dmg (검증 완료)
+├── package_macos.sh           # .app 번들링 + .dmg (2026-08-14 재확인)
 └── package_windows.ps1        # DLL 수집 + zip (미검증)
 ```
 
