@@ -25,6 +25,7 @@ set(SOURCES
     src/CalibrationTab.cpp
     src/DevicesTab.cpp
     src/EventLogTab.cpp
+    src/SettingsTab.cpp
     src/MqttBridge.cpp
     src/ScanCloud.cpp
     src/ScanFetcher.cpp
@@ -47,6 +48,7 @@ set(HEADERS
     src/TopViewPanel.h
     src/StatusBar.h
     src/CalibrationTab.h
+    src/SettingsTab.h
     src/DevicesTab.h
     src/EventLogTab.h
     src/MqttBridge.h

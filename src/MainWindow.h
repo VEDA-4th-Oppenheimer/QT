@@ -12,6 +12,7 @@ class TopViewPanel;
 class CalibrationTab;
 class DevicesTab;
 class EventLogTab;
+class SettingsTab;
 class DataBridge;
 class MqttBridge;
 class DemoBridge;
@@ -33,6 +34,8 @@ protected:
 
 private:
     QWidget *buildDashboardTab();
+    // cameras.json 에서 SETTINGS 탭에 보여줄 요약(호스트·채널 수)을 뽑는다.
+    void cameraSummary(QString *host, int *channels) const;
     void rebuildUi();          // 테마 전환 시 중앙 위젯을 통째로 다시 만든다
     void setThemeMode(Theme::Mode mode);
     void setDemoMode(bool demo);
@@ -64,12 +67,16 @@ private:
     CalibrationTab *m_calibTab  = nullptr;
     DevicesTab     *m_devicesTab= nullptr;
     EventLogTab    *m_eventsTab = nullptr;
+    SettingsTab    *m_settingsTab = nullptr;
     CameraTile     *m_tiles[4]  = {nullptr, nullptr, nullptr, nullptr};
 
     // 대시보드 좌(CCTV 4채널)/우(TOP-VIEW) 분할. 사용자가 핸들을 끌어 비율을
     // 바꾸고, 그 비율은 QSettings 에 남겨 재실행·테마 전환에도 유지된다.
     QSplitter *m_dashSplitter = nullptr;
     QByteArray m_splitterState;
+    // rebuildUi 가 탭 위젯을 새로 만들기 때문에, 보고 있던 탭을 기억해
+    // 테마를 바꿔도 같은 자리에 남게 한다.
+    int m_activeTab = 0;
     // TOP-VIEW 가 별도 창에 나가 있는 동안 스플리터 자리를 지키는 안내 라벨.
     // 비워두면 스플리터가 좌측 칸을 폭 전체로 늘려서 되돌릴 때 비율이 깨진다.
     QWidget *m_topViewWindow = nullptr;

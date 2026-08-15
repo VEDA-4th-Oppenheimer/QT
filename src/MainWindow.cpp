@@ -7,6 +7,7 @@
 #include "CalibrationTab.h"
 #include "DevicesTab.h"
 #include "EventLogTab.h"
+#include "SettingsTab.h"
 #include "MqttBridge.h"
 #include "DemoBridge.h"
 #include "RtspSource.h"
@@ -95,66 +96,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         if (m_topView != nullptr) m_topView->setScanList(e, note);
     });
 
-    auto *modeMenu = menuBar()->addMenu(QString::fromUtf8("모드"));
-    auto *demoAction = modeMenu->addAction(QString::fromUtf8("Demo Mode (브로커 없이 실행)"));
-    demoAction->setCheckable(true);
-    demoAction->setChecked(false);
-    connect(demoAction, &QAction::toggled, this, &MainWindow::setDemoMode);
-
-    modeMenu->addSeparator();
-    auto *camAction = modeMenu->addAction(QString::fromUtf8("카메라 설정…"));
-    connect(camAction, &QAction::triggered, this, &MainWindow::editCameraSettings);
-
-    // RTSP 디코더는 몇 번 실패하면 자동 재시도를 멈춘다(로그 도배·헛돌기 방지).
-    // 카메라를 나중에 켰거나 네트워크가 복구되면 여기서 다시 붙인다.
-    auto *camRetryAction = modeMenu->addAction(QString::fromUtf8("CCTV 재연결"));
-    connect(camRetryAction, &QAction::triggered, this, [this] {
-        appendLog("RTSP", QString::fromUtf8("사용자 요청 — 카메라에 다시 연결합니다"));
-        m_video->reconnectAll();
-    });
-
-    // 지도 더블클릭·헤더 버튼과 같은 동작. 메뉴에도 둬야 단축키가 붙고, 패널이
-    // 별도 창에 나가 있을 때 본창에서 되돌릴 방법이 생긴다.
-    auto *fullTopViewAction = modeMenu->addAction(QString::fromUtf8("TOP-VIEW 전체화면 켜기/끄기"));
+    // 모드/테마 메뉴에 있던 항목은 SETTINGS 탭으로 옮겼다(SettingsTab 참고).
+    // 메뉴와 탭에 같은 토글을 두 벌 두면 체크 상태가 어긋나므로 한쪽만 남긴다.
+    // 다만 전체화면은 단축키가 붙어 있어야 쓸모가 있어서 메뉴에도 남긴다 —
+    // 이건 토글 상태를 갖지 않는 동작이라 어긋날 여지가 없다.
+    auto *viewMenu = menuBar()->addMenu(QString::fromUtf8("보기"));
+    auto *fullTopViewAction = viewMenu->addAction(QString::fromUtf8("TOP-VIEW 전체화면 켜기/끄기"));
     fullTopViewAction->setShortcut(QKeySequence::FullScreen);
     connect(fullTopViewAction, &QAction::triggered, this, &MainWindow::toggleTopViewFullScreen);
-
-    auto *heightAction = modeMenu->addAction(QString::fromUtf8("센서 높이 설정…"));
-    connect(heightAction, &QAction::triggered, this, &MainWindow::editSensorHeight);
-
-    auto *openScanAction = modeMenu->addAction(QString::fromUtf8("스캔 파일 열기… (.pcd)"));
-    connect(openScanAction, &QAction::triggered, this, &MainWindow::openScanFile);
-
-    auto *logoutAction = modeMenu->addAction(QString::fromUtf8("로그아웃 (인증서·설정 삭제)"));
-    connect(logoutAction, &QAction::triggered, this, &MainWindow::logout);
-
-    // 개발자모드(다크 + 한화비전 오렌지 액센트) / 사용자모드(라이트) — 화면 구성은
-    // 동일, 색만 바뀐다. Qt 스타일시트는 위젯 생성 시점에 굳어버리므로(재적용
-    // 안 됨), 전환 시 중앙 위젯을 통째로 다시 만든다(rebuildUi 참고).
-    auto *themeMenu = menuBar()->addMenu(QString::fromUtf8("테마"));
-    auto *devModeAction = themeMenu->addAction(QString::fromUtf8("개발자 모드 (다크 · 한화비전)"));
-    auto *userModeAction = themeMenu->addAction(QString::fromUtf8("사용자 모드 (라이트)"));
-    devModeAction->setCheckable(true);
-    userModeAction->setCheckable(true);
-    devModeAction->setChecked(true);
-    auto *themeGroup = new QActionGroup(this);
-    themeGroup->setExclusive(true);
-    themeGroup->addAction(devModeAction);
-    themeGroup->addAction(userModeAction);
-    connect(devModeAction, &QAction::triggered, this, [this] { setThemeMode(Theme::Mode::Developer); });
-    connect(userModeAction, &QAction::triggered, this, [this] { setThemeMode(Theme::Mode::User); });
 
     rebuildUi();
 
     // 설정이 없으면 최초 설정을 받는다. 사용자가 취소하면 브로커 접속을 시도하는
     // 대신 Demo 모드로 띄운다 — 설정 없이 접속을 걸면 5초마다 재시도만 반복하고
     // 화면은 비어 있어서, 빈 실화면보다 데모가 낫다.
-    // (메뉴 체크 상태를 함께 맞춰야 하므로 setDemoMode 직접 호출 대신 액션을 켠다)
-    if (ensureConfigured()) {
-        setDemoMode(false);
-    } else {
-        demoAction->setChecked(true);
-    }
+    // setDemoMode 가 SETTINGS 탭의 체크 상태까지 맞춰주므로 그대로 호출한다.
+    setDemoMode(!ensureConfigured());
     m_video->loadConfigAndStart();
 }
 
@@ -194,6 +151,34 @@ void MainWindow::rebuildUi() {
     tabs->addTab(m_devicesTab, "DEVICES / MQTT");
     m_eventsTab = new EventLogTab(this);
     tabs->addTab(m_eventsTab, "EVENT LOG");
+
+    // SETTINGS 는 마지막에 둔다 — 자주 쓰는 탭을 앞에.
+    SettingsTab::State st;
+    st.theme           = Theme::CurrentMode;
+    st.demoMode        = m_demoMode;
+    st.sensorHeightMm  = m_sensorHeightMm;
+    st.topViewDetached = (m_topViewWindow != nullptr);
+    cameraSummary(&st.cameraHost, &st.cameraChannels);
+    m_settingsTab = new SettingsTab(st, this);
+    tabs->addTab(m_settingsTab, "SETTINGS");
+
+    connect(m_settingsTab, &SettingsTab::themeChangeRequested, this, &MainWindow::setThemeMode);
+    connect(m_settingsTab, &SettingsTab::demoModeToggled, this, &MainWindow::setDemoMode);
+    connect(m_settingsTab, &SettingsTab::cameraSettingsRequested, this, &MainWindow::editCameraSettings);
+    connect(m_settingsTab, &SettingsTab::cameraReconnectRequested, this, [this] {
+        appendLog("RTSP", QString::fromUtf8("사용자 요청 — 카메라에 다시 연결합니다"));
+        m_video->reconnectAll();
+    });
+    connect(m_settingsTab, &SettingsTab::topViewFullScreenToggled, this, &MainWindow::toggleTopViewFullScreen);
+    connect(m_settingsTab, &SettingsTab::sensorHeightRequested, this, &MainWindow::editSensorHeight);
+    connect(m_settingsTab, &SettingsTab::openScanFileRequested, this, &MainWindow::openScanFile);
+    connect(m_settingsTab, &SettingsTab::logoutRequested, this, &MainWindow::logout);
+
+    // 테마를 바꾸면 여기까지 다시 오므로, 보고 있던 탭으로 되돌려 놓는다.
+    // (안 하면 SETTINGS 에서 테마를 누른 순간 메인 대시보드로 튄다)
+    if (m_activeTab >= 0 && m_activeTab < tabs->count())
+        tabs->setCurrentIndex(m_activeTab);
+    connect(tabs, &QTabWidget::currentChanged, this, [this](int i) { m_activeTab = i; });
 
     auto *central = new QWidget(this);
     auto *l = new QVBoxLayout(central);
@@ -416,6 +401,8 @@ QWidget *MainWindow::buildDashboardTab() {
 void MainWindow::toggleTopViewFullScreen() {
     if (m_topViewWindow != nullptr) attachTopView();
     else                            detachTopView();
+    if (m_settingsTab != nullptr)
+        m_settingsTab->setTopViewDetached(m_topViewWindow != nullptr);
 }
 
 void MainWindow::detachTopView() {
@@ -490,6 +477,19 @@ bool MainWindow::ensureConfigured() {
     // 받아오므로, 사용자는 토큰만 입력하면 둘 다 붙는다.
     EnrollDialog dlg(this);
     return (dlg.exec() == QDialog::Accepted) && configReady();
+}
+
+void MainWindow::cameraSummary(QString *host, int *channels) const {
+    if (host != nullptr)     *host = QString();
+    if (channels != nullptr) *channels = 0;
+    QFile f(resolveConfigPath(QStringLiteral("config/cameras.json")));
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const auto ch = QJsonDocument::fromJson(f.readAll()).object()
+                        .value(QStringLiteral("channels")).toObject();
+    if (ch.isEmpty()) return;
+    if (channels != nullptr) *channels = ch.size();
+    // 채널마다 같은 카메라의 센서 0~3 이라 호스트는 하나다.
+    if (host != nullptr) *host = QUrl(ch.begin().value().toString()).host();
 }
 
 void MainWindow::editCameraSettings() {
@@ -568,6 +568,12 @@ void MainWindow::editCameraSettings() {
     // 재시작 없이 바로 적용한다.
     m_video->applyChannels(cams.value(QStringLiteral("channels")).toObject(),
                            QString::fromUtf8("카메라 설정"));
+
+    if (m_settingsTab != nullptr) {
+        QString h; int n = 0;
+        cameraSummary(&h, &n);
+        m_settingsTab->setCameraSummary(h, n);
+    }
 }
 
 void MainWindow::logout() {
@@ -597,6 +603,7 @@ void MainWindow::logout() {
 
 void MainWindow::setDemoMode(bool demo) {
     m_demoMode = demo;
+    if (m_settingsTab != nullptr) m_settingsTab->setDemoMode(demo);
     if (demo) {
         m_mqtt->stop();
         m_demo->start();
@@ -662,6 +669,7 @@ void MainWindow::editSensorHeight() {
     QSettings().setValue(QStringLiteral("scan/sensor_height_mm"), m_sensorHeightMm);
     appendLog("SCAN", QString::fromUtf8("센서 높이 %1 m (%2 mm) — 다음 스캔부터 적용")
                           .arg(m, 0, 'f', 3).arg(m_sensorHeightMm));
+    if (m_settingsTab != nullptr) m_settingsTab->setSensorHeight(m_sensorHeightMm);
 }
 
 void MainWindow::openScanFile() {
