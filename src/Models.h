@@ -32,6 +32,17 @@ struct ImuState {
     // (데이터가 아예 안 와도 킷이 멀쩡해 보임). false 라야 N/A 로 뜬다.
     bool   valid = false;   // false = 아직 측정 없음/IMU 미구현 — 화면에 표시하지 말 것(계약 §3.3)
     // 수평 게이트 임계값: "Point Cloud 이후 Camera Automatic Calibration" 문서 권장 초기값(1~2°, 미결/튜닝 대상).
+    //
+    // 주의: 이 값은 **데몬의 게이트와 일부러 다르다.** 여기 1.5° 는 "화면에
+    //   경고를 띄울 기준" 이고, 데몬의 LEVEL_GATE_MAX_DEG 는 "스캔을 거부할
+    //   기준" 이라 용도가 다르다. 데몬 쪽은 브링업 중이라 훨씬 느슨하다
+    //   (2026-08-19 기준 10.0°). 그래서 화면에는 "기울었다" 배너가 뜨는데
+    //   스캔은 그냥 도는 상태가 정상이다 — 버그로 오해하지 말 것.
+    //
+    //   근본 원인은 킷이 실제로 3.6° 기울어 있는데 그 자세를 IMU 설치각
+    //   오프셋의 기준으로 잡아버린 것이다. 거치를 바닥평면 기준으로 바로잡고
+    //   오프셋을 다시 재면 데몬 쪽을 3.0° 이하로 되돌릴 수 있고, 그때 두 값이
+    //   다시 가까워진다.
     bool level(double tolDeg = 1.5) const {
         return std::abs(roll) <= tolDeg && std::abs(pitch) <= tolDeg;
     }
@@ -89,14 +100,32 @@ struct ScanProgress {
     QDateTime ts;
 };
 
-// adts/event/error — 계약 §3.5. code 1~6 은 STM32 CMD_ERROR(protocol.h)
-// 원본, 100/101 은 데몬이 링크단절/홈타임아웃을 감지해 합성한 코드.
+// adts/event/error — 계약 §3.5.
+//
+// code 로 **출처**가 갈린다 (데몬 daemon_module.h, 2026-08-13 정리):
+//     < 100   STM32 가 CMD_ERROR 로 올린 것 (protocol.h proto_err_code)
+//               1 BAD_CRC / 2 BAD_LEN / 3 NOT_HOMED
+//               4 OUT_OF_RANGE / 5 STALL / 6 LIDAR
+//    >= 100   데몬 자신의 판정
+//             100 DISARM         안전정지
+//             101 HOME_TIMEOUT   홈 무응답으로 요청 취소
+//             102 NOT_LEVEL      수평 게이트가 스캔을 거부
+//             103 UPLOAD_FAIL    카메라 업로드 실패 (파일은 로컬에 남는다)
+//             104 BAD_REQUEST    cmd 페이로드 필드 누락/형식 오류
+//             105 EXPORT_FAIL    산출물 기록 실패 — **측정값 복구 불가**
+//             106 BUSY           지금 상태에서 받을 수 없는 요청
+//
+// 이 경계가 있기 전에는 4 하나가 세 뜻으로 쓰여서, code=4 를 받고도 STM 이
+// 거절한 건지 데몬이 페이로드를 못 읽은 건지 구분할 수 없었다.
+//
 // STM 오류는 항상 name="STM_ERROR"(코드별 세부 이름 아님)로 온다.
+// 데몬 판정은 name 이 "ERR_NOT_LEVEL" 처럼 구체적으로 온다.
 //
 // fatal 은 이제 데몬이 실제로 채운다(2026-08-12). 정의가 "하드웨어가
 // 고장났나" 가 아니라 **화면을 어떻게 그릴까** 라는 점에 유의:
 //     true   작업이 멈췄고 사용자가 개입해야 한다 — 배너·모달
-//            (3 NOT_HOMED / 5 STALL / 6 LIDAR / 100 안전정지 전부)
+//            (3 NOT_HOMED / 5 STALL / 6 LIDAR / 100 안전정지,
+//             101 홈 타임아웃, 102 수평 NG, 105 산출 실패)
 //     false  로그 한 줄이면 된다. 계속되거나 다시 시도하면 된다
 //            (1 BAD_CRC / 2 BAD_LEN / 4 OUT_OF_RANGE)
 struct KitError {
