@@ -233,7 +233,13 @@ void MainWindow::rebuildUi() {
             if (r.ok && !r.pcdPath.isEmpty()) m_scanFetcher->fetch(r.pcdPath);
         });
         connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
-            appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));
+            // 축이 있으면 뒤에 붙인다. 어느 축인지가 곧 어느 배선을 볼지라,
+            // 이게 없던 시절에는 last_err 하나만 보고 두 축을 다 뒤져야 했다.
+            const QString ax = axisLabel(e.axis);
+            appendLog("ERROR", QString("[%1] %2 %3%4")
+                                   .arg(e.code).arg(e.name, e.msg,
+                                        ax.isEmpty() ? QString()
+                                                     : QStringLiteral(" (%1)").arg(ax)));
         });
         connect(src, &DataBridge::objectsUpdated, m_topView, &TopViewPanel::setObjects);
         connect(src, &DataBridge::mapEdgesUpdated, m_topView, &TopViewPanel::setEdges);

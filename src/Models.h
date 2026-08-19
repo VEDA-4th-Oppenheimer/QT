@@ -62,6 +62,26 @@ struct ImuState {
 //      (나중에 추가되면 코드 변경 없이 채워짐) UI 는 실제로 오는 값만 표시한다.
 // ---------------------------------------------------------------------------
 
+// adts/state/daemon 의 diag — STM32 펌웨어가 CMD_STATUS 로 1초마다 올리는
+// 누적 진단 카운터(proto v6). 부팅 이후 누적이고 65535 에서 포화한다.
+//
+// 주의: valid 가 false 면 아래 값은 **"모른다"** 이지 "정상" 이 아니다.
+//   STM32 에 구버전 펌웨어가 올라가 있거나(그쪽은 CMD_STATUS 를 아예 안 보낸다)
+//   아직 첫 주기가 안 온 것이다. 0 을 그대로 초록불로 그리면 안 된다.
+//
+// 각 값이 뜻하는 것:
+//   txFail      STM32 의 UART 송신 실패. 0 이 아니면 상행 프레임이 유실됐다는
+//               뜻이라 스캔 점 수가 실제보다 적을 수 있다.
+//   rxOvf       STM32 수신 링버퍼 오버플로. 0 이 아니면 **STM32 메인루프가
+//               오래 막혔다** 는 뜻이다(256B = 하행 프레임 20개분).
+//   encRetry    엔코더 I2C 판독 재시도(양축 합). 계속 오르면 배선 접촉 의심.
+//   lidarDrop   라이다 큐가 차서 버린 샘플. 격자에 빈 셀로 남는다.
+//   rejectBusy  진행 중이라 거절한 SCAN_START. 조작자가 중복으로 눌렀다는 뜻.
+struct StmDiag {
+    bool    valid = false;
+    quint32 txFail = 0, rxOvf = 0, encRetry = 0, lidarDrop = 0, rejectBusy = 0;
+};
+
 // adts/state/daemon (retained) — 계약 §3.3. LWT 로 데몬 사망 시 자동으로
 // state="OFFLINE", online=false 가 온다.
 struct DaemonState {
@@ -72,6 +92,10 @@ struct DaemonState {
     bool     scanning = false;
     int      curPanDdeg = 0, curTiltDdeg = 0;   // 기구각(§7) — 계약각 아님
     int      lastErr = 0;
+    // 그 오류가 난 축 (proto v6). 0=축무관 / 1=팬 / 2=틸트 / 3=양축.
+    // 비트 플래그다 — 1=bit0(팬), 2=bit1(틸트) 이라 3 은 둘 다라는 뜻이다.
+    int      lastErrAxis = 0;
+    StmDiag  diag;
     ImuState level;
     QDateTime ts;
 };
@@ -133,8 +157,22 @@ struct KitError {
     int     code = 0;
     QString name, msg;
     bool    fatal = false;
+    // 오류가 난 축 (proto v6). 0=축무관 / 1=팬 / 2=틸트 / 3=양축.
+    // 비트 플래그라 3 은 "둘 다" 다. 데몬 자체 판정(100+)은 항상 0.
+    int     axis = 0;
     QDateTime ts;
 };
+
+// 축 코드를 사람이 읽는 말로. 축과 무관하면 빈 문자열이라 그대로 이어 붙여도
+// 된다("[3] STM_ERROR ... (팬)" / "[100] ERR_DISARM ...").
+inline QString axisLabel(int axis) {
+    switch (axis) {
+    case 1:  return QStringLiteral("팬");
+    case 2:  return QStringLiteral("틸트");
+    case 3:  return QStringLiteral("팬·틸트");
+    default: return QString();
+    }
+}
 
 // LiDAR 스캔에서 뽑은 실내 벽/기둥 에지 (평면 투영, 미터)
 struct MapEdge { QPointF a, b; };

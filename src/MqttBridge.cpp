@@ -305,6 +305,18 @@ void MqttBridge::handleStateDaemon(const QByteArray &payload) {
     s.curPanDdeg  = o.value("cur_pan_ddeg").toInt();
     s.curTiltDdeg = o.value("cur_tilt_ddeg").toInt();
     s.lastErr    = o.value("last_err").toInt();
+    s.lastErrAxis = o.value("last_err_axis").toInt();
+
+    // STM32 진단(proto v6). 구버전 데몬/펌웨어면 이 객체가 통째로 없어서
+    // valid=false 로 남는다 — 그게 맞는 동작이다("모른다"이지 "정상"이 아니다).
+    const auto dg = o.value("diag").toObject();
+    s.diag.valid      = dg.value("valid").toBool();
+    s.diag.txFail     = dg.value("tx_fail").toVariant().toUInt();
+    s.diag.rxOvf      = dg.value("rx_ovf").toVariant().toUInt();
+    s.diag.encRetry   = dg.value("enc_retry").toVariant().toUInt();
+    s.diag.lidarDrop  = dg.value("lidar_drop").toVariant().toUInt();
+    s.diag.rejectBusy = dg.value("reject_busy").toVariant().toUInt();
+
     const auto lvl = o.value("level").toObject();
     s.level.valid = lvl.value("valid").toBool();
     s.level.roll  = lvl.value("roll_deg").toDouble();
@@ -366,6 +378,7 @@ void MqttBridge::handleEventError(const QByteArray &payload) {
     e.name  = o.value("name").toString();
     e.msg   = o.value("msg").toString();
     e.fatal = o.value("fatal").toBool();
+    e.axis  = o.value("axis").toInt();   // proto v6. 없으면 0(축 무관)
     e.ts = tsFromUnixSeconds(o.value("ts").toVariant().toLongLong());
     emit kitErrorReceived(e);
 }
