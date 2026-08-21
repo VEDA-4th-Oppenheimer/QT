@@ -9,7 +9,7 @@ class TiltBanner : public QFrame {
     Q_OBJECT
 public:
     explicit TiltBanner(QWidget *parent = nullptr);
-    void update(const ImuState &imu, double tolDeg = 1.5);
+    void update(const ImuState &imu, double tolDeg = 10.0);   // 기본값은 ImuState::level() 과 동일하게 유지
 
 signals:
     void tiltOnset(const ImuState &imu);   // 수평(level) -> 이탈 로 처음 전환되는 순간
