@@ -1,5 +1,6 @@
 #include "ScanView3D.h"
 #include "Theme.h"
+#include "SpatialProjector.h"
 
 #include <QMatrix4x4>
 #include <QMouseEvent>
@@ -73,16 +74,40 @@ Ramp rampFor(bool dark) {
 
 const char *kLineVert = R"(#version 120
 attribute vec3 aPos;
+attribute vec3 aColor;
 uniform mat4 uMVP;
-void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+uniform float uPointSize;
+varying vec3 vColor;
+void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    gl_PointSize = uPointSize;
+    vColor = aColor;
+}
 )";
 
 const char *kLineFrag = R"(#version 120
 uniform vec4 uColor;
-void main() { gl_FragColor = uColor; }
+uniform int uPointMode;
+uniform int uUseVertexColor;
+varying vec3 vColor;
+void main() {
+    if (uPointMode != 0) {
+        vec2 d = gl_PointCoord - vec2(0.5);
+        if (dot(d, d) > 0.25) discard;
+    }
+    gl_FragColor = uUseVertexColor != 0 ? vec4(vColor, 1.0) : uColor;
+}
 )";
 
 constexpr float kPointSize = 2.2f;
+
+QColor objectColor(const SpatialObject &object) {
+    static const QColor channelColors[] = {
+        QColor("#ffb347"), QColor("#58c7ff"), QColor("#c38bff"), QColor("#64d88b")
+    };
+    if (object.cls == QStringLiteral("VEHICLE")) return Theme::Ok;
+    return channelColors[qBound(0, object.channel - 1, 3)];
+}
 
 }   // namespace
 
@@ -95,6 +120,7 @@ ScanView3D::~ScanView3D() {
     if (!m_glReady) return;
     makeCurrent();
     m_vbo.destroy();
+    m_objectVbo.destroy();
     doneCurrent();
 }
 
@@ -137,6 +163,11 @@ void ScanView3D::setScanCloud(const ScanCloud &c) {
 
     m_dirty = true;
     resetView();
+    update();
+}
+
+void ScanView3D::setObjects(const QVector<SpatialObject> &objects) {
+    m_objects = objects;
     update();
 }
 
@@ -183,6 +214,7 @@ void ScanView3D::initializeGL() {
     // 아래 m_dirty = true 로 다음 paintGL 때 새 버퍼에 다시 올라간다.
     if (m_vbo.isCreated()) m_vbo.destroy();
     if (m_gridVbo.isCreated()) m_gridVbo.destroy();
+    if (m_objectVbo.isCreated()) m_objectVbo.destroy();
 
     if (!m_prog->addShaderFromSourceCode(QOpenGLShader::Vertex, kVert) ||
         !m_prog->addShaderFromSourceCode(QOpenGLShader::Fragment, kFrag) ||
@@ -201,6 +233,8 @@ void ScanView3D::initializeGL() {
     m_vbo.setUsagePattern(QOpenGLBuffer::StaticDraw);
     m_gridVbo.create();
     m_gridVbo.setUsagePattern(QOpenGLBuffer::StaticDraw);
+    m_objectVbo.create();
+    m_objectVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
     buildGrid();
     glEnable(GL_DEPTH_TEST);
     glEnable(0x8642 /* GL_PROGRAM_POINT_SIZE */);
@@ -269,12 +303,13 @@ void ScanView3D::paintGL() {
         QMatrix4x4 mv, proj;
         mv.lookAt(eye, m_target, QVector3D(0, 1, 0));
         proj.perspective(50.0f, width() / static_cast<float>(qMax(1, height())), 0.05f, 200.0f);
-
         if (m_gridCount > 0 && m_lineProg->isLinked()) {
             m_lineProg->bind();
             m_lineProg->setUniformValue("uMVP", proj * mv);
             const QColor gc = Theme::Grid;
             m_lineProg->setUniformValue("uColor", QVector4D(gc.redF(), gc.greenF(), gc.blueF(), 1.0f));
+            m_lineProg->setUniformValue("uPointMode", 0);
+            m_lineProg->setUniformValue("uUseVertexColor", 0);
             m_gridVbo.bind();
             const int lp = m_lineProg->attributeLocation("aPos");
             m_lineProg->enableAttributeArray(lp);
@@ -307,13 +342,15 @@ void ScanView3D::paintGL() {
         m_prog->disableAttributeArray(locT);
         m_vbo.release();
         m_prog->release();
+
+        m_lastMvp = proj * mv;
+        drawObjectMarkers(m_lastMvp);
     }
 
     drawOverlay();
 }
 
-// QPainter 로 위에 글자를 얹는다. QOpenGLWidget 은 paintGL 안에서 QPainter 를
-// 함께 쓸 수 있다 — 라벨 하나 그리자고 텍스처 아틀라스를 만들 이유가 없다.
+// QPainter 로 조작 안내 및 3D 객체 거리 태그를 얹는다.
 void ScanView3D::drawOverlay() {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
@@ -328,6 +365,50 @@ void ScanView3D::drawOverlay() {
         return;
     }
 
+    // 3D 객체 식별 태그 및 3D 실측 거리 표시
+    double gy = SpatialProjector::instance().globalGroundY();
+    if (gy <= 0.1) gy = (m_cloud.sensorHeightM > 0.1 ? m_cloud.sensorHeightM : (m_cloud.isEmpty() ? 1.789 : std::abs(m_cloud.hMin)));
+    const float ground = -static_cast<float>(gy);
+
+    QMap<int, int> channelPersonCount;
+    for (const SpatialObject &object : m_objects) {
+        if (!object.hasTopViewPosition()) continue;
+        const int personIndex = ++channelPersonCount[object.channel];
+        const float ox = static_cast<float>(object.posM.x());
+        const float oy = ground + static_cast<float>(object.heightM);
+        const float oz = worldZ(object.posM.y());
+
+        const QVector4D clip = m_lastMvp * QVector4D(ox, oy + 0.35f, oz, 1.0f);
+        if (clip.w() > 0.05f) {
+            const float ndcX = clip.x() / clip.w();
+            const float ndcY = clip.y() / clip.w();
+            if (ndcX >= -1.05f && ndcX <= 1.05f && ndcY >= -1.05f && ndcY <= 1.05f) {
+                const float sx = (ndcX * 0.5f + 0.5f) * width();
+                const float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * height();
+                const double dist3D = std::sqrt(ox * ox + oy * oy + oz * oz);
+                const QString label = QStringLiteral("CH%1-%2 · %3m (3D)")
+                                          .arg(object.channel)
+                                          .arg(personIndex)
+                                          .arg(dist3D, 0, 'f', 1);
+
+                QFont labelFont("JetBrains Mono");
+                labelFont.setPixelSize(10);
+                labelFont.setBold(true);
+                p.setFont(labelFont);
+                QFontMetrics fm(labelFont);
+                const int tw = fm.horizontalAdvance(label) + 8;
+                const int th = fm.height() + 2;
+                const QRectF tagRect(sx - tw / 2.0, sy - th - 6, tw, th);
+
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(18, 20, 24, 210));
+                p.drawRoundedRect(tagRect, 3, 3);
+                p.setPen(objectColor(object));
+                p.drawText(tagRect, Qt::AlignCenter, label);
+            }
+        }
+    }
+
     p.setPen(Theme::TextFaint);
     p.drawText(QRectF(10, height() - 34, width() - 20, 14), Qt::AlignLeft,
                QString::fromUtf8("드래그 회전 · 휠 확대 · Shift+드래그 이동 · 더블클릭 초기화"));
@@ -339,6 +420,50 @@ void ScanView3D::drawOverlay() {
                    .arg(static_cast<int>(std::fmod(m_az + 360.0f, 360.0f)))
                    .arg(static_cast<int>(m_el))
                    .arg(QString::number(m_radius, 'f', 1)));
+}
+
+void ScanView3D::drawObjectMarkers(const QMatrix4x4 &mvp) {
+    if (!m_objectVbo.isCreated() || m_objects.isEmpty() || !m_lineProg->isLinked()) return;
+
+    // x, y(up), z, r, g, b. 마커를 점군의 실제 실측 바닥면에 일치시킨다.
+    QVector<float> vertices;
+    vertices.reserve(m_objects.size() * 6);
+    double gy = SpatialProjector::instance().globalGroundY();
+    if (gy <= 0.1) gy = (m_cloud.sensorHeightM > 0.1 ? m_cloud.sensorHeightM : (m_cloud.isEmpty() ? 1.789 : std::abs(m_cloud.hMin)));
+    const float ground = -static_cast<float>(gy);
+
+    for (const SpatialObject &object : m_objects) {
+        if (!object.hasTopViewPosition()) continue;
+        const QColor color = objectColor(object);
+        vertices << static_cast<float>(object.posM.x())
+                 << ground + static_cast<float>(object.heightM)
+                 << worldZ(object.posM.y())
+                 << color.redF() << color.greenF() << color.blueF();
+    }
+    if (vertices.isEmpty()) return;
+
+    // Markers must remain visible over the point cloud.  They are annotations,
+    // not additional geometry used for occlusion testing.
+    glDisable(GL_DEPTH_TEST);
+    m_objectVbo.bind();
+    m_objectVbo.allocate(vertices.constData(), static_cast<int>(vertices.size() * sizeof(float)));
+    m_lineProg->bind();
+    m_lineProg->setUniformValue("uMVP", mvp);
+    m_lineProg->setUniformValue("uPointSize", 14.0f * static_cast<float>(devicePixelRatioF()));
+    m_lineProg->setUniformValue("uPointMode", 1);
+    m_lineProg->setUniformValue("uUseVertexColor", 1);
+    const int pos = m_lineProg->attributeLocation("aPos");
+    const int color = m_lineProg->attributeLocation("aColor");
+    m_lineProg->enableAttributeArray(pos);
+    m_lineProg->setAttributeBuffer(pos, GL_FLOAT, 0, 3, 6 * sizeof(float));
+    m_lineProg->enableAttributeArray(color);
+    m_lineProg->setAttributeBuffer(color, GL_FLOAT, 3 * sizeof(float), 3, 6 * sizeof(float));
+    glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(vertices.size() / 6));
+    m_lineProg->disableAttributeArray(pos);
+    m_lineProg->disableAttributeArray(color);
+    m_lineProg->release();
+    m_objectVbo.release();
+    glEnable(GL_DEPTH_TEST);
 }
 
 void ScanView3D::mousePressEvent(QMouseEvent *ev) {

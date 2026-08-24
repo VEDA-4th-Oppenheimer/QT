@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt:MetadataStream xmlns:tt="http://www.onvif.org/ver10/schema">
+  <tt:VideoAnalytics>
+    <tt:Frame UtcTime="2026-08-18T08:00:00Z">
+      <tt:Object ObjectId="ch4-onvif-person" coordinate_frame="top_view_m">
+        <tt:Type>Human</tt:Type>
+        <tt:CenterOfGravity x="-0.85" y="1.40"/>
+      </tt:Object>
+    </tt:Frame>
+  </tt:VideoAnalytics>
+</tt:MetadataStream>

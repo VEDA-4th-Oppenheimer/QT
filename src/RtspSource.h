@@ -1,9 +1,12 @@
 #pragma once
+#include <QByteArray>
 #include <QObject>
 #include <QMap>
 #include <QSet>
 #include <QImage>
 #include <QJsonObject>
+#include <QVector>
+#include "Models.h"
 
 class RtspDecoder;
 
@@ -18,6 +21,11 @@ public:
 
     void loadConfigAndStart(const QString &path = QStringLiteral("config/cameras.json"));
 
+    // RTSP decoder 외의 transport/replay adapter가 확보한 metadata frame도 같은
+    // 채널 병합 경로로 넣는다. 실제 decoder는 이 경계를 사용하고, offline fixture는
+    // 카메라 없이 decoder 이후의 source 동작을 검증할 때 사용한다.
+    void ingestMetadataPayload(int channel, const QByteArray &payload);
+
 public slots:
     // 카메라 설정을 적용한다(최초 로드, 그리고 '카메라 설정' 메뉴에서 변경 시).
     // 같은 내용이면 아무것도 하지 않는다 — 돌고 있는 스트림을 괜히 끊지 않으려고.
@@ -30,6 +38,7 @@ public slots:
 
 signals:
     void frameReceived(int channel, const QImage &frame);
+    void objectsUpdated(const QVector<SpatialObject> &objects);
     void channelStatusChanged(int channel, bool online, double fps);
     void logLine(const QString &tag, const QString &msg);
 
@@ -37,6 +46,9 @@ private:
     void stopAll();
 
     QMap<int, RtspDecoder *> m_decoders;
+    QMap<int, QVector<SpatialObject>> m_objectsByChannel;
+    QMap<int, QByteArray> m_metadataBuffers;
+    QSet<int> m_metadataLogSeen;
     QJsonObject              m_applied;   // 현재 돌고 있는 채널 설정(중복 적용 방지)
     QSet<int>                m_gaveUp;    // 재시도를 포기해 스레드가 끝난 채널
 };

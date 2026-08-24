@@ -1,4 +1,5 @@
 build/
+build-*/
 paho.mqtt.cpp/
 .idea/
 .claude/

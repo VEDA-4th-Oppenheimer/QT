@@ -206,7 +206,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     auto mono10 = [](QLabel *l) { l->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextMuted.name())); };
 
     ll->addWidget(legendDot(legend, Theme::Warn));
-    auto *lp = new QLabel("PERSON", legend); mono10(lp); ll->addWidget(lp);
+    auto *lp = new QLabel("PERSON · RTSP", legend); mono10(lp); ll->addWidget(lp);
 
     auto *wallSwatch = new QLabel(legend);
     wallSwatch->setFixedSize(14, 2);
@@ -236,6 +236,10 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     m_cloudInfo = new QLabel(legend);
     mono10(m_cloudInfo);
     legendV->addWidget(m_cloudInfo);
+
+    m_objectInfo = new QLabel(legend);
+    mono10(m_objectInfo);
+    legendV->addWidget(m_objectInfo);
 
     // 하단 통계 바
     auto *stats = new QFrame(this);
@@ -287,6 +291,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     setImu({});
     setDaemonState({});
     setScanProgress({});
+    setObjects({});
 }
 
 bool TopViewPanel::eventFilter(QObject *watched, QEvent *ev) {
@@ -308,7 +313,27 @@ void TopViewPanel::setDetached(bool detached) {
 
 void TopViewPanel::setRoomSize(double w, double d) { m_map->setRoomSize(w, d); }
 void TopViewPanel::setEdges(const QVector<MapEdge> &e) { m_map->setEdges(e); }
-void TopViewPanel::setObjects(const QVector<SpatialObject> &o) { m_map->setObjects(o); }
+void TopViewPanel::setObjects(const QVector<SpatialObject> &o) {
+    m_map->setObjects(o);
+    m_view3d->setObjects(o);
+    int topViewCount = 0;
+    int personCount = 0;
+    int unprojectedCount = 0;
+    for (const SpatialObject &object : o) {
+        if (!object.hasTopViewPosition()) {
+            ++unprojectedCount;
+            continue;
+        }
+        ++topViewCount;
+        if (object.cls == QStringLiteral("PERSON")) ++personCount;
+    }
+    QString status = QStringLiteral("OBJECTS %1 · PERSON %2")
+                         .arg(topViewCount).arg(personCount);
+    if (unprojectedCount > 0) {
+        status += QStringLiteral(" · UNPROJECTED %1").arg(unprojectedCount);
+    }
+    m_objectInfo->setText(status);
+}
 
 void TopViewPanel::setScanCloud(const ScanCloud &c) {
     m_map->setScanCloud(c);
@@ -376,6 +401,16 @@ void TopViewPanel::showScanList() {
     m_stack->setCurrentIndex(1);
     m_listNote->setText(QString::fromUtf8("목록을 불러오는 중…"));
     emit refreshRequested();
+}
+
+void TopViewPanel::showMap2D() {
+    m_btn2d->setChecked(true);
+    m_stack->setCurrentIndex(0);
+}
+
+void TopViewPanel::showCloud3D() {
+    m_btn3d->setChecked(true);
+    m_stack->setCurrentIndex(m_view3d->hasCloud() ? 2 : 1);
 }
 
 void TopViewPanel::setScanList(const QVector<ScanEntry> &entries, const QString &note) {

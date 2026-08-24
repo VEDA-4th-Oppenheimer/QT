@@ -1,23 +1,54 @@
 #include "RtspDecoder.h"
 
+#ifdef USE_FFMPEG
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/dict.h>
+#include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
 }
+#endif
 
 #include <QDateTime>
 
 namespace {
 constexpr int kReconnectDelayMs = 3000;
 constexpr int kReadTimeoutMs = 8000;
-constexpr int kMaxDecodeWidth = 960;   // 타일 표시용으로 다운스케일 (디코딩 자체는 원본 해상도로 수행)
-
-// 카메라가 없는 현장(데모/사무실)에서 8초 타임아웃 + 3초 대기를 무한히 반복하면
-// 로그가 연결 실패로 도배되고 스레드도 계속 살아 있다. 몇 번 해보고 안 되면
-// 포기하고, 사용자가 '카메라 설정' 이나 'CCTV 재연결' 로 명시적으로 다시 시킬 때만
-// 붙는다. 한 번이라도 붙었던 스트림이 끊긴 경우도 같은 횟수만큼만 재시도한다.
+constexpr int kMaxDecodeWidth = 960;
 constexpr int kMaxConnectAttempts = 3;
+
+#ifdef USE_FFMPEG
+bool looksLikeMetadataStream(const AVStream *stream) {
+    if (stream == nullptr || stream->codecpar == nullptr) return false;
+    const auto type = stream->codecpar->codec_type;
+    if (type != AVMEDIA_TYPE_VIDEO && type != AVMEDIA_TYPE_AUDIO) {
+        return true;
+    }
+
+    AVDictionaryEntry *entry = nullptr;
+    while ((entry = av_dict_get(stream->metadata, "", entry, AV_DICT_IGNORE_SUFFIX)) != nullptr) {
+        const QString key = QString::fromUtf8(entry->key).toLower();
+        const QString value = QString::fromUtf8(entry->value).toLower();
+        if (key.contains("metadata") || key.contains("mimetype") || key.contains("handler")
+            || value.contains("metadata") || value.contains("onvif")
+            || value.contains("application/xml") || value.contains("application/json")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString streamTypeName(const AVStream *stream) {
+    if (stream == nullptr || stream->codecpar == nullptr) return QStringLiteral("unknown");
+    switch (stream->codecpar->codec_type) {
+    case AVMEDIA_TYPE_DATA: return QStringLiteral("data");
+    case AVMEDIA_TYPE_SUBTITLE: return QStringLiteral("subtitle");
+    case AVMEDIA_TYPE_ATTACHMENT: return QStringLiteral("attachment");
+    default: return QStringLiteral("sub-stream");
+    }
+}
+#endif
 }
 
 RtspDecoder::RtspDecoder(int channel, QString url, QObject *parent)
@@ -30,6 +61,7 @@ RtspDecoder::~RtspDecoder() {
 
 void RtspDecoder::stop() { m_stop.store(true); }
 
+#ifdef USE_FFMPEG
 int RtspDecoder::interruptCallback(void *opaque) {
     auto *self = static_cast<RtspDecoder *>(opaque);
     return (self->m_stop.load() || QDateTime::currentMSecsSinceEpoch() > self->m_deadlineMs) ? 1 : 0;
@@ -43,7 +75,7 @@ bool RtspDecoder::openStream() {
 
     AVDictionary *opts = nullptr;
     av_dict_set(&opts, "rtsp_transport", "tcp", 0);
-    av_dict_set(&opts, "timeout", "8000000", 0);       // microseconds
+    av_dict_set(&opts, "timeout", "8000000", 0);
     av_dict_set(&opts, "max_delay", "500000", 0);
 
     int ret = avformat_open_input(&m_fmt, m_url.toUtf8().constData(), nullptr, &opts);
@@ -71,6 +103,19 @@ bool RtspDecoder::openStream() {
         return false;
     }
 
+    m_metadataStreamIndices.clear();
+    for (unsigned i = 0; i < m_fmt->nb_streams; ++i) {
+        if (static_cast<int>(i) != m_videoStreamIndex) {
+            m_metadataStreamIndices.insert(static_cast<int>(i));
+            emit logLine("RTSP", QString("CH%1 metadata stream 등록 (index=%2, type=%3)")
+                                     .arg(m_channel).arg(static_cast<int>(i))
+                                     .arg(streamTypeName(m_fmt->streams[i])));
+        }
+    }
+    if (m_metadataStreamIndices.isEmpty()) {
+        emit logLine("RTSP", QString("CH%1 metadata stream 없음 — 비디오 인밴드 검사 활성화").arg(m_channel));
+    }
+
     AVCodecParameters *params = m_fmt->streams[m_videoStreamIndex]->codecpar;
     const AVCodec *dec = avcodec_find_decoder(params->codec_id);
     if (!dec) {
@@ -88,101 +133,131 @@ bool RtspDecoder::openStream() {
 
     m_dstW = qMin(kMaxDecodeWidth, m_codec->width);
     m_dstH = m_codec->width > 0 ? m_dstW * m_codec->height / m_codec->width : m_codec->height;
-    if (m_dstH < 1) m_dstH = 1;
+    m_sws = sws_getContext(m_codec->width, m_codec->height, m_codec->pix_fmt,
+                           m_dstW, m_dstH, AV_PIX_FMT_RGB24,
+                           SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!m_sws) {
+        emit logLine("RTSP", QString("CH%1 스케일러 생성 실패").arg(m_channel));
+        closeStream();
+        return false;
+    }
 
-    emit logLine("RTSP", QString("CH%1 연결됨 %2x%3 -> %4x%5")
-                              .arg(m_channel).arg(m_codec->width).arg(m_codec->height).arg(m_dstW).arg(m_dstH));
+    emit logLine("RTSP", QString("CH%1 연결 성공 — %2x%3 @ %4x%5 (스트림 총 %6개)")
+                             .arg(m_channel).arg(m_codec->width).arg(m_codec->height).arg(m_dstW).arg(m_dstH).arg(m_fmt->nb_streams));
     return true;
 }
 
 void RtspDecoder::closeStream() {
-    if (m_sws) { sws_freeContext(m_sws); m_sws = nullptr; }
+    if (m_sws)   { sws_freeContext(m_sws);       m_sws = nullptr; }
     if (m_codec) { avcodec_free_context(&m_codec); m_codec = nullptr; }
-    if (m_fmt) { avformat_close_input(&m_fmt); m_fmt = nullptr; }
+    if (m_fmt)   { avformat_close_input(&m_fmt);  m_fmt = nullptr; }
     m_videoStreamIndex = -1;
+    m_metadataStreamIndices.clear();
 }
 
+bool RtspDecoder::waitBeforeRetry(int attempt) {
+    const int delayMs = kReconnectDelayMs * attempt;
+    emit logLine("RTSP", QString("CH%1 %2초 후 재시도 (%3/%4)…")
+                             .arg(m_channel).arg(delayMs / 1000).arg(attempt).arg(kMaxConnectAttempts));
+    const qint64 until = QDateTime::currentMSecsSinceEpoch() + delayMs;
+    while (!m_stop.load() && QDateTime::currentMSecsSinceEpoch() < until) {
+        msleep(100);
+    }
+    return !m_stop.load();
+}
+#endif
+
 void RtspDecoder::run() {
-    int attempt = 0;   // 프레임을 한 장이라도 받으면 0 으로 되돌아간다
+#ifdef USE_FFMPEG
+    m_attempt = 0;
     while (!m_stop.load()) {
-        m_attempt = ++attempt;
+        ++m_attempt;
+        emit statusChanged(m_channel, false, 0.0);
         if (!openStream()) {
-            emit statusChanged(m_channel, false, 0.0);
-            if (!waitBeforeRetry(attempt)) return;
+            if (m_attempt >= kMaxConnectAttempts) {
+                emit logLine("RTSP", QString("CH%1 연결 재시도 %2회 실패 — 자동 재시도를 멈춥니다. "
+                                             "'CCTV 재연결' 로 다시 시도하세요.").arg(m_channel).arg(kMaxConnectAttempts));
+                emit gaveUp(m_channel);
+                return;
+            }
+            if (!waitBeforeRetry(m_attempt)) return;
             continue;
         }
+
         emit statusChanged(m_channel, true, 0.0);
+        m_attempt = 0;
 
         AVPacket *pkt = av_packet_alloc();
         AVFrame  *frame = av_frame_alloc();
+        AVFrame  *rgbFrame = av_frame_alloc();
+        const int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
+        auto *buffer = static_cast<uint8_t *>(av_malloc(numBytes));
+        av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer,
+                             AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
 
-        int fpsCount = 0;
-        qint64 framesTotal = 0;
-        qint64 fpsWindowStart = QDateTime::currentMSecsSinceEpoch();
-        bool readError = false;
+        int frameCount = 0;
+        qint64 fpsTimer = QDateTime::currentMSecsSinceEpoch();
 
-        while (!m_stop.load() && !readError) {
+        while (!m_stop.load()) {
             m_deadlineMs = QDateTime::currentMSecsSinceEpoch() + kReadTimeoutMs;
-            const int ret = av_read_frame(m_fmt, pkt);
+            int ret = av_read_frame(m_fmt, pkt);
             if (ret < 0) {
-                if (!m_stop.load())
-                    emit logLine("RTSP", QString("CH%1 스트림 끊김 — 재연결 시도").arg(m_channel));
-                readError = true;
+                emit logLine("RTSP", QString("CH%1 스트림 끊김 (read error)").arg(m_channel));
                 break;
             }
-            if (pkt->stream_index == m_videoStreamIndex && avcodec_send_packet(m_codec, pkt) == 0) {
-                while (avcodec_receive_frame(m_codec, frame) == 0) {
-                    if (!m_sws) {
-                        m_sws = sws_getContext(frame->width, frame->height, static_cast<AVPixelFormat>(frame->format),
-                                                m_dstW, m_dstH, AV_PIX_FMT_RGB24,
-                                                SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+            // 1) 비-비디오 스트림(메타데이터 트랙) 패킷 처리
+            if (pkt->stream_index != m_videoStreamIndex) {
+                if (pkt->data && pkt->size > 0) {
+                    const QByteArray payload(reinterpret_cast<const char *>(pkt->data), pkt->size);
+                    emit metadataReady(m_channel, payload);
+                }
+            }
+
+            // 2) 비디오 스트림 패킷 디코딩 및 인밴드 메타데이터 검사
+            if (pkt->stream_index == m_videoStreamIndex) {
+                if (pkt->data && pkt->size > 20) {
+                    const QByteArray raw(reinterpret_cast<const char *>(pkt->data), pkt->size);
+                    if (raw.contains("BoundingBox") || raw.contains("boundingbox") || raw.contains("ObjectId")) {
+                        emit metadataReady(m_channel, raw);
                     }
-                    if (m_sws) {
-                        QImage img(m_dstW, m_dstH, QImage::Format_RGB888);
-                        uint8_t *dstData[1] = {img.bits()};
-                        int dstStride[1] = {static_cast<int>(img.bytesPerLine())};
-                        sws_scale(m_sws, frame->data, frame->linesize, 0, frame->height, dstData, dstStride);
-                        emit frameReady(m_channel, img);
-                        ++fpsCount;
-                        ++framesTotal;
+                }
+
+                ret = avcodec_send_packet(m_codec, pkt);
+                if (ret >= 0) {
+                    while (avcodec_receive_frame(m_codec, frame) >= 0) {
+                        sws_scale(m_sws, frame->data, frame->linesize, 0, m_codec->height,
+                                  rgbFrame->data, rgbFrame->linesize);
+
+                        QImage img(rgbFrame->data[0], m_dstW, m_dstH, rgbFrame->linesize[0], QImage::Format_RGB888);
+                        emit frameReady(m_channel, img.copy());
+
+                        ++frameCount;
+                        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+                        if (now - fpsTimer >= 1000) {
+                            const double fps = frameCount * 1000.0 / (now - fpsTimer);
+                            emit statusChanged(m_channel, true, fps);
+                            frameCount = 0;
+                            fpsTimer = now;
+                        }
                     }
                 }
             }
             av_packet_unref(pkt);
-
-            const qint64 now = QDateTime::currentMSecsSinceEpoch();
-            if (now - fpsWindowStart >= 1000) {
-                emit statusChanged(m_channel, true, fpsCount * 1000.0 / double(now - fpsWindowStart));
-                fpsCount = 0;
-                fpsWindowStart = now;
-            }
         }
 
-        av_packet_free(&pkt);
+        av_free(buffer);
+        av_frame_free(&rgbFrame);
         av_frame_free(&frame);
+        av_packet_free(&pkt);
         closeStream();
+
         if (m_stop.load()) break;
-        emit statusChanged(m_channel, false, 0.0);
-
-        // 붙기는 했는데 프레임이 한 장도 안 온 세션은 실패로 친다(그렇지 않으면
-        // open 성공 → 즉시 read 실패가 반복되며 무한 루프가 된다).
-        if (framesTotal > 0) attempt = 0;
-        else if (!waitBeforeRetry(attempt)) return;
+        if (!waitBeforeRetry(1)) return;
     }
-}
-
-// 다음 시도까지 기다린다. 재시도 예산을 다 썼거나 stop() 이 걸리면 false —
-// 호출자는 run() 을 빠져나가고 스레드는 그대로 끝난다.
-bool RtspDecoder::waitBeforeRetry(int attempt) {
-    if (attempt >= kMaxConnectAttempts) {
-        emit logLine("RTSP", QString("CH%1 연결 %2회 실패 — 자동 재시도를 멈춥니다. "
-                                     "메뉴 '모드 > CCTV 재연결' 로 다시 시도하세요.")
-                                 .arg(m_channel).arg(attempt));
-        emit gaveUp(m_channel);
-        return false;
-    }
-    const int delayMs = kReconnectDelayMs * attempt;   // 3s, 6s
-    for (int waited = 0; waited < delayMs && !m_stop.load(); waited += 100)
-        QThread::msleep(100);
-    return !m_stop.load();
+    emit statusChanged(m_channel, false, 0.0);
+#else
+    emit logLine("RTSP", QString("FFmpeg 미내장 — CH%1 RTSP 비활성 (데모/정적 모드 동작)").arg(m_channel));
+    emit statusChanged(m_channel, false, 0.0);
+#endif
 }

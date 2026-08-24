@@ -1,4 +1,5 @@
 #include "TopViewWidget.h"
+#include "SpatialProjector.h"
 #include "Theme.h"
 #include <QPainter>
 #include <QPainterPath>
@@ -30,6 +31,15 @@ QColor cloudRamp(double t, bool dark) {
 
 constexpr int kCloudBands = 6;   // 밴드 수 — 점마다 펜을 바꾸는 대신 묶어서 그린다
 
+QColor objectColor(const SpatialObject &object) {
+    static const QColor channelColors[] = {
+        QColor("#ffb347"), QColor("#58c7ff"), QColor("#c38bff"), QColor("#64d88b")
+    };
+    if (object.cls == QStringLiteral("VEHICLE")) return Theme::Ok;
+    const int index = qBound(0, object.channel - 1, 3);
+    return channelColors[index];
+}
+
 }   // namespace
 
 TopViewWidget::TopViewWidget(QWidget *parent) : QWidget(parent) {
@@ -42,7 +52,13 @@ void TopViewWidget::setRoomSize(double w, double d) { m_roomW = w; m_roomD = d; 
 void TopViewWidget::setEdges(const QVector<MapEdge> &e) { m_edges = e; update(); }
 void TopViewWidget::setObjects(const QVector<SpatialObject> &o) { m_objects = o; update(); }
 
-void TopViewWidget::setScanCloud(const ScanCloud &c) { m_cloud = c; update(); }
+void TopViewWidget::setScanCloud(const ScanCloud &c) {
+    m_cloud = c;
+    if (!c.isEmpty() && c.xMax > c.xMin && c.zMax > c.zMin) {
+        SpatialProjector::instance().setRoomBounds(c.xMin, c.xMax, c.zMin, c.zMax);
+    }
+    update();
+}
 void TopViewWidget::clearScanCloud() { m_cloud = ScanCloud(); update(); }
 
 QRectF TopViewWidget::viewRectM() const {
@@ -55,6 +71,14 @@ QRectF TopViewWidget::viewRectM() const {
                            (m_cloud.xMax - m_cloud.xMin) + 0.6,
                            (m_cloud.zMax - m_cloud.zMin) + 0.6);
         r = r.united(cloud);
+    }
+    // Metadata가 점군/방 외곽보다 앞서거나 멀리 있는 경우에도 사람 marker가
+    // 위젯 밖으로 잘리지 않게 한다. 정상적인 고정환경에서는 cloud와 거의
+    // 겹치지만, 신규 사람·장면·센서 범위가 바뀐 경우의 안전망이다.
+    for (const SpatialObject &object : m_objects) {
+        if (!object.hasTopViewPosition()) continue;
+        const QRectF marker(object.posM - QPointF(0.3, 0.3), QSizeF(0.6, 0.6));
+        r = r.united(marker);
     }
     return r;
 }
@@ -141,12 +165,52 @@ void TopViewWidget::paintEvent(QPaintEvent *) {
     // 묻혀서 뒤에 판까지 깔아야 했고, 그렇게 겹쳐 놓아도 읽히지 않았다.
     // 형태(킷 마커·객체 점·스케일 바)만 남긴다.
 
-    // WiseAI 감지 객체
+    // RTSP/WiseAI 감지 객체 (PCD 1:1 대응 지면 평면 위치 포인트 표현)
+    QMap<int, int> channelPersonCount;
     for (const auto &o : m_objects) {
+        if (!o.hasTopViewPosition()) continue;
         const QPointF c = toPx(o.posM);
-        const QColor col = (o.cls == "VEHICLE") ? Theme::Ok : Theme::Warn;
-        p.setPen(Qt::NoPen); p.setBrush(col);
-        p.drawEllipse(c, 6, 6);
+        const QColor col = objectColor(o);
+
+        // 1) 중심 원형 포인트 (솔리드)
+        p.setPen(Qt::NoPen);
+        p.setBrush(col);
+        p.drawEllipse(c, 5.0, 5.0);
+
+        // 2) 이중 펄스 링 마커
+        QColor ring1 = col; ring1.setAlphaF(0.60);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(ring1, 1.5));
+        p.drawEllipse(c, 11, 11);
+
+        QColor ring2 = col; ring2.setAlphaF(0.25);
+        p.setPen(QPen(ring2, 1.0));
+        p.drawEllipse(c, 19, 19);
+
+        // 3) 식별 라벨: 채널별 현재 인식 인원 순번 (예: CH1-1, CH1-2)
+        const int personIndex = ++channelPersonCount[o.channel];
+        const double dist2D = o.distM > 0.0 ? o.distM : std::hypot(o.posM.x(), o.posM.y());
+        const QString label = QStringLiteral("CH%1-%2 · %3m")
+                                  .arg(o.channel)
+                                  .arg(personIndex)
+                                  .arg(dist2D, 0, 'f', 1);
+
+        QFont labelFont("JetBrains Mono");
+        labelFont.setPixelSize(10);
+        labelFont.setBold(true);
+        p.setFont(labelFont);
+
+        QFontMetrics fm(labelFont);
+        const int tw = fm.horizontalAdvance(label) + 8;
+        const int th = fm.height() + 2;
+        const QRectF tagRect(c.x() + 12, c.y() - th / 2.0, tw, th);
+
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(18, 20, 24, 200));
+        p.drawRoundedRect(tagRect, 3, 3);
+
+        p.setPen(col);
+        p.drawText(tagRect, Qt::AlignCenter, label);
     }
     p.setBrush(Qt::NoBrush);
 

@@ -1,223 +1,132 @@
 #include "SettingsTab.h"
-#include <QVBoxLayout>
+
+#include "Theme.h"
+
+#include <QCheckBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QFrame>
 #include <QPushButton>
-#include <QCheckBox>
-#include <QScrollArea>
+#include <QSignalBlocker>
+#include <QVBoxLayout>
 
 namespace {
-
-QLabel *sectionTitle(QWidget *parent, const QString &text) {
-    auto *l = new QLabel(text, parent);
-    l->setStyleSheet(Theme::mono(10, 700) +
-                     QString("color:%1;letter-spacing:1.4px;").arg(Theme::TextFaint.name()));
-    return l;
+QLabel *valueLabel(QWidget *parent) {
+    auto *label = new QLabel(parent);
+    label->setStyleSheet(Theme::mono(11) + QStringLiteral("color:%1;").arg(Theme::TextDim2.name()));
+    return label;
+}
 }
 
-// 한 줄 = 제목 + 설명 + 오른쪽 조작부. 값을 보여줄 수 있는 것이 메뉴와의 차이라
-// 조작부 왼쪽에 현재 값을 놓을 수 있게 valueOut 을 돌려준다.
-QFrame *row(QWidget *parent, const QString &title, const QString &desc,
-            QWidget *control, QLabel **valueOut = nullptr) {
-    auto *card = new QFrame(parent);
-    card->setObjectName("card");
-    auto *h = new QHBoxLayout(card);
-    h->setContentsMargins(13, 11, 13, 11);
-    h->setSpacing(14);
+SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) {
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(16, 16, 16, 16);
+    root->setSpacing(12);
 
-    auto *left = new QVBoxLayout;
-    left->setSpacing(3);
-    auto *t = new QLabel(title, card);
-    t->setStyleSheet(QString("color:%1;font-size:13px;font-weight:600;").arg(Theme::Text2.name()));
-    left->addWidget(t);
-    auto *d = new QLabel(desc, card);
-    d->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextMuted.name()));
-    d->setWordWrap(true);
-    left->addWidget(d);
-    h->addLayout(left, 1);
+    auto *title = new QLabel(QStringLiteral("SETTINGS"), this);
+    title->setStyleSheet(Theme::mono(13, 700) + QStringLiteral("color:%1;letter-spacing:2px;").arg(Theme::Accent.name()));
+    root->addWidget(title);
 
-    if (valueOut) {
-        *valueOut = new QLabel(card);
-        (*valueOut)->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(Theme::Text3.name()));
-        (*valueOut)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        h->addWidget(*valueOut);
-    }
-    if (control) h->addWidget(control);
-    return card;
-}
+    auto *form = new QFormLayout;
+    form->setHorizontalSpacing(24);
+    form->setVerticalSpacing(10);
+    m_theme = valueLabel(this);
+    m_camera = valueLabel(this);
+    m_height = valueLabel(this);
+    m_topView = valueLabel(this);
+    m_calibLabel = valueLabel(this);
+    form->addRow(QStringLiteral("테마"), m_theme);
+    form->addRow(QStringLiteral("카메라"), m_camera);
+    form->addRow(QStringLiteral("센서 높이"), m_height);
+    form->addRow(QStringLiteral("TOP-VIEW"), m_topView);
+    form->addRow(QStringLiteral("캘리브레이션 RT"), m_calibLabel);
+    root->addLayout(form);
 
-QPushButton *button(QWidget *parent, const QString &text, bool danger = false) {
-    auto *b = new QPushButton(text, parent);
-    b->setCursor(Qt::PointingHandCursor);
-    b->setMinimumWidth(112);
-    if (danger) {
-        b->setStyleSheet(QString(
-            "QPushButton{background:%1;color:%2;border:1px solid %3;border-radius:3px;"
-            "padding:6px 12px;font-size:12px;}"
-            "QPushButton:hover{background:%4;}")
-            .arg(Theme::DangerBg.name(), Theme::DangerText.name(),
-                 Theme::DangerBorder.name(), Theme::Danger.name()));
-    }
-    return b;
-}
-
-} // namespace
-
-SettingsTab::SettingsTab(const State &s, QWidget *parent)
-    : QWidget(parent), m_theme(s.theme), m_topViewDetached(s.topViewDetached) {
-
-    // 항목이 늘어나도 잘리지 않게 스크롤 안에 담는다.
-    auto *outer = new QVBoxLayout(this);
-    outer->setContentsMargins(0, 0, 0, 0);
-    auto *scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    outer->addWidget(scroll);
-
-    auto *page = new QWidget(scroll);
-    scroll->setWidget(page);
-    auto *root = new QVBoxLayout(page);
-    root->setContentsMargins(14, 14, 14, 14);
-    root->setSpacing(9);
-
-    // ---- 화면 -------------------------------------------------------------
-    root->addWidget(sectionTitle(page, QString::fromUtf8("화면")));
-
-    auto *themeBox = new QWidget(page);
-    auto *themeLay = new QHBoxLayout(themeBox);
-    themeLay->setContentsMargins(0, 0, 0, 0);
-    themeLay->setSpacing(6);
-    m_devTheme  = button(themeBox, QString::fromUtf8("다크"));
-    m_userTheme = button(themeBox, QString::fromUtf8("라이트"));
-    m_devTheme->setCheckable(true);
-    m_userTheme->setCheckable(true);
-    themeLay->addWidget(m_devTheme);
-    themeLay->addWidget(m_userTheme);
-    root->addWidget(row(page, QString::fromUtf8("테마"),
-                        QString::fromUtf8("전환하면 화면을 다시 그립니다. 진행 중인 스캔에는 영향이 없습니다."),
-                        themeBox));
-    refreshThemeButtons();
-    connect(m_devTheme, &QPushButton::clicked, this, [this] {
-        m_theme = Theme::Mode::Developer;
-        refreshThemeButtons();
-        emit themeChangeRequested(Theme::Mode::Developer);
-    });
-    connect(m_userTheme, &QPushButton::clicked, this, [this] {
-        m_theme = Theme::Mode::User;
-        refreshThemeButtons();
-        emit themeChangeRequested(Theme::Mode::User);
-    });
-
-    m_topView = button(page, QString());
-    refreshTopViewButton();
-    connect(m_topView, &QPushButton::clicked, this, &SettingsTab::topViewFullScreenToggled);
-    root->addWidget(row(page, QString::fromUtf8("TOP-VIEW 전체화면"),
-                        QString::fromUtf8("TOP-VIEW 를 별도 창으로 띄워 모니터 하나를 통째로 씁니다."),
-                        m_topView));
-
-    // ---- 연결 -------------------------------------------------------------
-    root->addWidget(sectionTitle(page, QString::fromUtf8("연결")));
-
-    auto *camBtn = button(page, QString::fromUtf8("변경…"));
-    connect(camBtn, &QPushButton::clicked, this, &SettingsTab::cameraSettingsRequested);
-    root->addWidget(row(page, QString::fromUtf8("카메라"),
-                        QString::fromUtf8("CCTV 주소와 계정. 영상은 이 앱이 카메라에 직접 연결합니다(RPi 경유 아님)."),
-                        camBtn, &m_cameraValue));
-    setCameraSummary(s.cameraHost, s.cameraChannels);
-
-    auto *retryBtn = button(page, QString::fromUtf8("재연결"));
-    connect(retryBtn, &QPushButton::clicked, this, &SettingsTab::cameraReconnectRequested);
-    root->addWidget(row(page, QString::fromUtf8("CCTV 재연결"),
-                        QString::fromUtf8("연결이 끊긴 뒤 자동 재시도를 멈춘 상태에서 다시 붙습니다."),
-                        retryBtn));
-
-    // ---- 스캔 -------------------------------------------------------------
-    root->addWidget(sectionTitle(page, QString::fromUtf8("스캔")));
-
-    auto *heightBtn = button(page, QString::fromUtf8("변경…"));
-    connect(heightBtn, &QPushButton::clicked, this, &SettingsTab::sensorHeightRequested);
-    root->addWidget(row(page, QString::fromUtf8("센서 높이"),
-                        QString::fromUtf8("바닥에서 pan/tilt 축까지의 높이. 스캔 명령에 실려 나갑니다."),
-                        heightBtn, &m_heightValue));
-    setSensorHeight(s.sensorHeightMm);
-
-    auto *openBtn = button(page, QString::fromUtf8("열기…"));
-    connect(openBtn, &QPushButton::clicked, this, &SettingsTab::openScanFileRequested);
-    root->addWidget(row(page, QString::fromUtf8("스캔 파일 열기"),
-                        QString::fromUtf8("저장해 둔 .pcd 를 TOP-VIEW 에 올립니다. 브로커 연결 없이도 됩니다."),
-                        openBtn));
-
-    // ---- 실행 모드 ---------------------------------------------------------
-    root->addWidget(sectionTitle(page, QString::fromUtf8("실행 모드")));
-
-    m_demo = new QCheckBox(page);
-    m_demo->setChecked(s.demoMode);
-    m_demo->setCursor(Qt::PointingHandCursor);
+    m_demo = new QCheckBox(QStringLiteral("Demo Mode"), this);
     connect(m_demo, &QCheckBox::toggled, this, &SettingsTab::demoModeToggled);
-    root->addWidget(row(page, QString::fromUtf8("Demo 모드"),
-                        QString::fromUtf8("브로커 없이 가짜 데이터로 화면을 채웁니다. 장비에는 아무 명령도 나가지 않습니다."),
-                        m_demo));
+    root->addWidget(m_demo);
 
-    // ---- 계정 -------------------------------------------------------------
-    root->addWidget(sectionTitle(page, QString::fromUtf8("계정")));
+    // 캘리브레이션 RT 모드 전환 스위치
+    m_manualCalib = new QCheckBox(QStringLiteral("Manual RT 사용 (체크 해제 시 Automatic RT 사용)"), this);
+    m_manualCalib->setChecked(state.manualCalib);
+    connect(m_manualCalib, &QCheckBox::toggled, this, [this](bool checked) {
+        setCalibMode(checked);
+        emit calibModeToggled(checked);
+    });
+    root->addWidget(m_manualCalib);
 
-    auto *outBtn = button(page, QString::fromUtf8("로그아웃"), /*danger=*/true);
-    connect(outBtn, &QPushButton::clicked, this, &SettingsTab::logoutRequested);
-    root->addWidget(row(page, QString::fromUtf8("로그아웃"),
-                        QString::fromUtf8("이 기기에 저장된 인증서와 접속 설정을 지웁니다. 다시 쓰려면 재발급이 필요합니다."),
-                        outBtn));
+    auto *buttons = new QHBoxLayout;
+    auto addButton = [this, buttons](const QString &text, auto signal) {
+        auto *button = new QPushButton(text, this);
+        button->setFixedHeight(30);
+        connect(button, &QPushButton::clicked, this, signal);
+        buttons->addWidget(button);
+    };
+    addButton(QStringLiteral("카메라 설정"), &SettingsTab::cameraSettingsRequested);
+    addButton(QStringLiteral("CCTV 재연결"), &SettingsTab::cameraReconnectRequested);
+    addButton(QStringLiteral("센서 높이"), &SettingsTab::sensorHeightRequested);
+    addButton(QStringLiteral("스캔 파일 열기"), &SettingsTab::openScanFileRequested);
+    addButton(QStringLiteral("TOP-VIEW 전체화면"), &SettingsTab::topViewFullScreenToggled);
+    root->addLayout(buttons);
 
+    auto *bottom = new QHBoxLayout;
+    auto *dev = new QPushButton(QStringLiteral("Developer"), this);
+    auto *user = new QPushButton(QStringLiteral("User"), this);
+    dev->setFixedSize(68, 26);
+    user->setFixedSize(50, 26);
+    connect(dev, &QPushButton::clicked, this, [this] { emit themeChangeRequested(Theme::Mode::Developer); });
+    connect(user, &QPushButton::clicked, this, [this] { emit themeChangeRequested(Theme::Mode::User); });
+    bottom->addWidget(dev);
+    bottom->addWidget(user);
+    bottom->addStretch(1);
+
+    auto *logout = new QPushButton(QStringLiteral("로그아웃"), this);
+    logout->setFixedHeight(26);
+    connect(logout, &QPushButton::clicked, this, &SettingsTab::logoutRequested);
+    bottom->addWidget(logout);
+    root->addLayout(bottom);
     root->addStretch(1);
-}
 
-void SettingsTab::refreshThemeButtons() {
-    const bool dev = (m_theme == Theme::Mode::Developer);
-    const QString on = QString(
-        "QPushButton{background:%1;color:%2;border:1px solid %1;border-radius:3px;"
-        "padding:6px 12px;font-size:12px;font-weight:600;}")
-        .arg(Theme::Accent.name(), Theme::Bg.name());
-    const QString off = QString(
-        "QPushButton{background:transparent;color:%1;border:1px solid %2;border-radius:3px;"
-        "padding:6px 12px;font-size:12px;}"
-        "QPushButton:hover{color:%3;border-color:%4;}")
-        .arg(Theme::TextMuted.name(), Theme::Border.name(),
-             Theme::Text2.name(), Theme::Accent.name());
-    m_devTheme->setStyleSheet(dev ? on : off);
-    m_userTheme->setStyleSheet(dev ? off : on);
-    m_devTheme->setChecked(dev);
-    m_userTheme->setChecked(!dev);
-}
-
-void SettingsTab::refreshTopViewButton() {
-    m_topView->setText(m_topViewDetached ? QString::fromUtf8("원래대로")
-                                         : QString::fromUtf8("전체화면"));
-}
-
-void SettingsTab::setSensorHeight(int mm) {
-    if (m_heightValue)
-        m_heightValue->setText(QString("%1 mm").arg(mm));
-}
-
-void SettingsTab::setCameraSummary(const QString &host, int channels) {
-    if (!m_cameraValue) return;
-    if (host.isEmpty()) {
-        m_cameraValue->setText(QString::fromUtf8("미설정"));
-        m_cameraValue->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(Theme::Warn.name()));
-    } else {
-        m_cameraValue->setText(channels > 0 ? QString("%1 · %2ch").arg(host).arg(channels) : host);
-        m_cameraValue->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(Theme::Text3.name()));
-    }
-}
-
-void SettingsTab::setTopViewDetached(bool detached) {
-    m_topViewDetached = detached;
-    if (m_topView) refreshTopViewButton();
+    m_theme->setText(state.theme == Theme::Mode::Developer ? QStringLiteral("Developer") : QStringLiteral("User"));
+    setDemoMode(state.demoMode);
+    setTopViewDetached(state.topViewDetached);
+    setSensorHeight(state.sensorHeightMm);
+    setCameraSummary(state.cameraHost, state.cameraChannels);
+    setCalibMode(state.manualCalib);
 }
 
 void SettingsTab::setDemoMode(bool demo) {
-    if (m_demo && m_demo->isChecked() != demo) {
-        QSignalBlocker b(m_demo);
-        m_demo->setChecked(demo);
+    if (m_demo == nullptr) return;
+    const QSignalBlocker blocker(m_demo);
+    m_demo->setChecked(demo);
+}
+
+void SettingsTab::setTopViewDetached(bool detached) {
+    if (m_topView != nullptr) {
+        m_topView->setText(detached ? QStringLiteral("별도 창") : QStringLiteral("대시보드"));
+    }
+}
+
+void SettingsTab::setSensorHeight(int mm) {
+    if (m_height != nullptr) {
+        m_height->setText(QStringLiteral("%1 m (%2 mm)").arg(mm / 1000.0, 0, 'f', 3).arg(mm));
+    }
+}
+
+void SettingsTab::setCameraSummary(const QString &host, int channels) {
+    if (m_camera != nullptr) {
+        m_camera->setText(host.isEmpty()
+                              ? QStringLiteral("미설정")
+                              : QStringLiteral("%1 · %2채널").arg(host).arg(channels));
+    }
+}
+
+void SettingsTab::setCalibMode(bool manual) {
+    if (m_manualCalib != nullptr) {
+        const QSignalBlocker blocker(m_manualCalib);
+        m_manualCalib->setChecked(manual);
+    }
+    if (m_calibLabel != nullptr) {
+        m_calibLabel->setText(manual ? QStringLiteral("Manual RT (차루코 실측)") : QStringLiteral("Automatic RT (기구 기하 기준)"));
     }
 }

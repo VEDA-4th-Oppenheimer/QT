@@ -17,12 +17,30 @@ struct ChannelState {
     QString  meta      = "1920x1080 · WiseAI ON";
 };
 
-// WiseAI 감지 객체를 캘리브레이션 RT 로 변환한 실내 평면 좌표(미터, 킷 원점)
+#include <QRectF>
+
+// WiseAI 감지 객체를 캘리브레이션 RT 로 변환한 실내 평면 좌표(미터, 킷 원점).
+// top_view_m 의 x/y 는 TopViewWidget의 지도축(+x 오른쪽, +y 위/북)이며,
+// ScanCloud의 PCD (+x 오른쪽, +z 전방)에서는 (x, z)를 그대로 매핑한다.
 struct SpatialObject {
+    QString  id;                  // tracker/object id (없으면 CHn-Pn 으로 표시)
     QString  cls;                  // "PERSON" / "VEHICLE"
     QPointF  posM;                 // (x, y) meters
     double   distM = 0.0;
+    double   confidence = 0.0;     // 0 이면 미제공
+    double   heightM = 0.0;        // 3D 표시용 높이 오프셋(미제공 시 지면)
     int      channel = 1;
+    QString  coordinateFrame = QStringLiteral("top_view_m");
+    QRectF   pixelBBox;            // 원본 영상 픽셀/정규화 바운딩 박스
+    bool     isProjected = false;  // 카메라 RT 지면 투영을 통해 계산된 좌표인지 여부
+    QDateTime ts;
+
+    bool hasTopViewPosition() const {
+        return coordinateFrame.compare(QStringLiteral("top_view_m"), Qt::CaseInsensitive) == 0
+            || coordinateFrame.compare(QStringLiteral("lidar_xy_m"), Qt::CaseInsensitive) == 0
+            || coordinateFrame.compare(QStringLiteral("kit_xy_m"), Qt::CaseInsensitive) == 0
+            || coordinateFrame.compare(QStringLiteral("world_m"), Qt::CaseInsensitive) == 0;
+    }
 };
 
 struct ImuState {

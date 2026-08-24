@@ -4,7 +4,9 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLWidget>
 #include <QPoint>
+#include <QMatrix4x4>
 #include <memory>
+#include "Models.h"
 #include "ScanCloud.h"
 
 // 스캔 포인트클라우드 3D 뷰.
@@ -25,6 +27,7 @@ public:
     ~ScanView3D() override;
 
     void setScanCloud(const ScanCloud &cloud);
+    void setObjects(const QVector<SpatialObject> &objects);
     void setColorBy(ColorBy mode);
     void resetView();
     bool hasCloud() const { return m_count > 0; }
@@ -43,6 +46,7 @@ private:
     void uploadCloud();
     void buildGrid();
     void drawOverlay();
+    void drawObjectMarkers(const QMatrix4x4 &mvp);
 
     // 컨텍스트마다 새로 만든다 — 위젯이 다른 창으로 옮겨가면 GL 컨텍스트가
     // 바뀌는데, 셰이더 프로그램은 만들어진 컨텍스트에 묶여 있다(initializeGL 주석).
@@ -50,6 +54,7 @@ private:
     std::unique_ptr<QOpenGLShaderProgram> m_lineProg{new QOpenGLShaderProgram};
     QOpenGLBuffer m_vbo{QOpenGLBuffer::VertexBuffer};
     QOpenGLBuffer m_gridVbo{QOpenGLBuffer::VertexBuffer};
+    QOpenGLBuffer m_objectVbo{QOpenGLBuffer::VertexBuffer};
     int m_gridCount = 0;
     int  m_count = 0;
     bool m_glReady = false;
@@ -57,6 +62,7 @@ private:
 
     QVector<float> m_pending;      // x, y(up), z, t(0~1 색상값) x N
     ScanCloud      m_cloud;
+    QVector<SpatialObject> m_objects;
     ColorBy        m_colorBy = ColorBy::Height;
 
     // 궤도 카메라 — 웹 뷰어와 같은 규약(방위/고도/시거리).
@@ -64,4 +70,5 @@ private:
     QVector3D m_target;
     QPoint m_lastPos;
     bool m_panning = false;
+    QMatrix4x4 m_lastMvp;
 };

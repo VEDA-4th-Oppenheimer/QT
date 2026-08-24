@@ -1,0 +1,13 @@
+{
+  "coordinate_frame": "top_view_m",
+  "objects": [
+    {
+      "id": "field-person-01",
+      "class": "person",
+      "x_m": 0.75,
+      "y_m": 1.25,
+      "height_m": 1.7,
+      "confidence": 0.95
+    }
+  ]
+}

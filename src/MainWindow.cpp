@@ -17,6 +17,7 @@
 #include "CameraConfig.h"
 #include "Theme.h"
 #include "ConfigPath.h"
+#include "SpatialProjector.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -67,9 +68,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // 좁으면 지도가 먼저 줄고 수치는 남도록, 하한은 실제로 들어가는 크기로 낮춘다.
     setMinimumSize(1280, 720);
 
-    // 설치 높이는 장비를 옮기지 않는 한 그대로라 매번 묻지 않고 기억해둔다.
-    m_sensorHeightMm = QSettings().value(QStringLiteral("scan/sensor_height_mm"),
-                                         m_sensorHeightMm).toInt();
+    // 설치 높이는 기본 1.789m(1789mm)이며, SETTINGS 탭에서 언제든 변경 가능
+    m_sensorHeightMm = QSettings().value(QStringLiteral("scan/sensor_height_mm"), 1789).toInt();
+    if (m_sensorHeightMm <= 0) m_sensorHeightMm = 1789;
+    SpatialProjector::instance().setGlobalGroundY(m_sensorHeightMm / 1000.0);
+
+    const bool isManual = QSettings().value(QStringLiteral("calib/is_manual"), false).toBool();
+    SpatialProjector::instance().setCalibrationMode(isManual ? CalibrationMode::Manual : CalibrationMode::Automatic);
 
     m_mqtt = new MqttBridge(this);
     m_demo = new DemoBridge(this);
@@ -81,6 +86,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_scanFetcher, &ScanFetcher::cloudReady, this, [this](const ScanCloud &c) {
         m_lastCloud = c; m_haveCloud = true;
         m_topView->setScanCloud(c);
+        if (c.xMax > c.xMin && c.zMax > c.zMin) {
+            SpatialProjector::instance().setRoomBounds(c.xMin, c.xMax, c.zMin, c.zMax);
+        }
         appendLog("EXPORT", QString::fromUtf8("포인트클라우드 %1점 표시 (미반사 %2, 반경 %3 m)")
                                 .arg(c.count()).arg(c.invalid).arg(c.radiusM(), 0, 'f', 1));
     });
@@ -158,12 +166,18 @@ void MainWindow::rebuildUi() {
     st.demoMode        = m_demoMode;
     st.sensorHeightMm  = m_sensorHeightMm;
     st.topViewDetached = (m_topViewWindow != nullptr);
+    st.manualCalib     = QSettings().value(QStringLiteral("calib/is_manual"), false).toBool();
     cameraSummary(&st.cameraHost, &st.cameraChannels);
     m_settingsTab = new SettingsTab(st, this);
     tabs->addTab(m_settingsTab, "SETTINGS");
 
     connect(m_settingsTab, &SettingsTab::themeChangeRequested, this, &MainWindow::setThemeMode);
     connect(m_settingsTab, &SettingsTab::demoModeToggled, this, &MainWindow::setDemoMode);
+    connect(m_settingsTab, &SettingsTab::calibModeToggled, this, [this](bool manual) {
+        SpatialProjector::instance().setCalibrationMode(manual ? CalibrationMode::Manual : CalibrationMode::Automatic);
+        QSettings().setValue(QStringLiteral("calib/is_manual"), manual);
+        appendLog("CALIB", QString::fromUtf8("캘리브레이션 RT 모드 전환: %1").arg(SpatialProjector::instance().calibrationModeName()));
+    });
     connect(m_settingsTab, &SettingsTab::cameraSettingsRequested, this, &MainWindow::editCameraSettings);
     connect(m_settingsTab, &SettingsTab::cameraReconnectRequested, this, [this] {
         appendLog("RTSP", QString::fromUtf8("사용자 요청 — 카메라에 다시 연결합니다"));
@@ -233,15 +247,17 @@ void MainWindow::rebuildUi() {
             if (r.ok && !r.pcdPath.isEmpty()) m_scanFetcher->fetch(r.pcdPath);
         });
         connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
-            // 축이 있으면 뒤에 붙인다. 어느 축인지가 곧 어느 배선을 볼지라,
-            // 이게 없던 시절에는 last_err 하나만 보고 두 축을 다 뒤져야 했다.
-            const QString ax = axisLabel(e.axis);
-            appendLog("ERROR", QString("[%1] %2 %3%4")
-                                   .arg(e.code).arg(e.name, e.msg,
-                                        ax.isEmpty() ? QString()
-                                                     : QStringLiteral(" (%1)").arg(ax)));
+            appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));
         });
-        connect(src, &DataBridge::objectsUpdated, m_topView, &TopViewPanel::setObjects);
+        connect(src, &DataBridge::objectsUpdated, this, [this, src](const QVector<SpatialObject> &objects) {
+            // 실제 RTSP metadata가 들어오기 시작하면 데모의 주기적 가상 PERSON이
+            // 실측 객체를 덮어쓰지 않게 한다.
+            if (src == static_cast<DataBridge *>(m_demo) && m_rtspMetadataActive) return;
+            m_lastObjects = objects;
+            m_haveObjects = true;
+            m_topView->setObjects(objects);
+            for (auto *t : m_tiles) t->setDetectedObjects(objects);
+        });
         connect(src, &DataBridge::mapEdgesUpdated, m_topView, &TopViewPanel::setEdges);
         connect(src, &DataBridge::frameReceived, this, [this](int ch, const QImage &img) {
             if (ch >= 1 && ch <= 4) m_tiles[ch - 1]->setFrame(img);
@@ -267,6 +283,14 @@ void MainWindow::rebuildUi() {
         m_devicesTab->setChannelOnline(ch, online);
     });
     connect(m_video, &RtspSource::logLine, this, &MainWindow::appendLog);
+    connect(m_video, &RtspSource::objectsUpdated, this,
+            [this](const QVector<SpatialObject> &objects) {
+        m_rtspMetadataActive = true;
+        m_lastObjects = objects;
+        m_haveObjects = true;
+        m_topView->setObjects(objects);
+        for (auto *t : m_tiles) t->setDetectedObjects(objects);
+    });
 
     connect(m_banner, &TiltBanner::tiltOnset, this, [this](const ImuState &imu) {
         appendLog("TILT", QString(QString::fromUtf8("킷 수평 이탈 감지 — Roll %1° / Pitch %2°. 재설치 필요"))
@@ -324,6 +348,7 @@ void MainWindow::rebuildUi() {
         m_calibTab->setScanResult(m_lastResult);
     }
     if (m_haveCloud) m_topView->setScanCloud(m_lastCloud);
+    if (m_haveObjects) m_topView->setObjects(m_lastObjects);
 
     // 3D 칸의 파일 목록 — 위젯이 새로 만들어졌으므로 매번 다시 잇는다.
     connect(m_topView, &TopViewPanel::refreshRequested, this, [this] {
@@ -673,7 +698,8 @@ void MainWindow::editSensorHeight() {
 
     m_sensorHeightMm = static_cast<int>(qRound(m * 1000.0));
     QSettings().setValue(QStringLiteral("scan/sensor_height_mm"), m_sensorHeightMm);
-    appendLog("SCAN", QString::fromUtf8("센서 높이 %1 m (%2 mm) — 다음 스캔부터 적용")
+    SpatialProjector::instance().setGlobalGroundY(m_sensorHeightMm / 1000.0);
+    appendLog("SCAN", QString::fromUtf8("센서 높이 %1 m (%2 mm) — 실시간 투영 및 다음 스캔 적용")
                           .arg(m, 0, 'f', 3).arg(m_sensorHeightMm));
     if (m_settingsTab != nullptr) m_settingsTab->setSensorHeight(m_sensorHeightMm);
 }

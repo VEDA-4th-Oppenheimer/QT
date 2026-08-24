@@ -1,18 +1,28 @@
 #include "RtspSource.h"
 #include "RtspDecoder.h"
 #include "ConfigPath.h"
+#include "SpatialMetadata.h"
+#include "SpatialProjector.h"
 
+#ifdef USE_FFMPEG
 extern "C" {
 #include <libavutil/log.h>
 }
+#endif
 
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <utility>
 
+namespace {
+constexpr qsizetype kMaxMetadataBufferBytes = 1024 * 1024;
+}
+
 RtspSource::RtspSource(QObject *parent) : QObject(parent) {
-    av_log_set_level(AV_LOG_ERROR);   // FFmpeg 내부 경고 로그로 콘솔이 시끄러워지지 않도록
+#ifdef USE_FFMPEG
+    av_log_set_level(AV_LOG_ERROR);
+#endif
 }
 
 RtspSource::~RtspSource() {
@@ -24,6 +34,12 @@ void RtspSource::stopAll() {
     for (auto *d : std::as_const(m_decoders)) { d->wait(3000); delete d; }
     m_decoders.clear();
     m_gaveUp.clear();
+    m_metadataBuffers.clear();
+    if (!m_objectsByChannel.isEmpty()) {
+        m_objectsByChannel.clear();
+        m_metadataLogSeen.clear();
+        emit objectsUpdated({});
+    }
 }
 
 void RtspSource::reconnectAll() {
@@ -31,15 +47,23 @@ void RtspSource::reconnectAll() {
         emit logLine("RTSP", QString::fromUtf8("설정된 카메라 채널이 없습니다 — '카메라 설정' 에서 IP 를 먼저 입력하세요."));
         return;
     }
-    // 돌고 있는 스트림까지 포함해 통째로 다시 연다(사용자가 명시적으로 시킨 재연결).
     const QJsonObject cfg = m_applied;
     m_applied = QJsonObject();
     applyChannels(cfg, QString::fromUtf8("CCTV 재연결"));
 }
 
 void RtspSource::loadConfigAndStart(const QString &path) {
+    SpatialProjector::instance().loadProfiles(resolveConfigPath("config/calibration_profiles.json"));
+
     QFile f(resolveConfigPath(path));
     if (!f.open(QIODevice::ReadOnly)) {
+        const QString envUrl = qEnvironmentVariable("QT_RTSP_CH1_URL").trimmed();
+        if (!envUrl.isEmpty()) {
+            QJsonObject channels;
+            channels.insert(QStringLiteral("1"), envUrl);
+            applyChannels(channels, QStringLiteral("QT_RTSP_CH1_URL"));
+            return;
+        }
         emit logLine("RTSP", QString("%1 없음 — RTSP 비활성화 (기존 데모/라이브 채널 상태 유지)").arg(path));
         return;
     }
@@ -52,10 +76,6 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         emit logLine("RTSP", QString("%1 에 채널 설정 없음").arg(origin));
         return;
     }
-    // retained 메시지는 재접속할 때마다 다시 온다. 같은 내용에 스트림을 끊고
-    // 다시 붙이면 화면만 깜빡이므로 그냥 무시한다. 다만 연결을 포기한 채널이
-    // 있으면 같은 설정이라도 다시 연다 — 사용자가 '카메라 설정' 에서 값을 그대로
-    // 두고 확인만 눌렀을 때 재시도가 되게.
     if (channels == m_applied && m_gaveUp.isEmpty()) return;
 
     const bool restarting = !m_decoders.isEmpty();
@@ -71,6 +91,10 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
 
         auto *dec = new RtspDecoder(ch, url, this);
         connect(dec, &RtspDecoder::frameReady, this, &RtspSource::frameReceived);
+        connect(dec, &RtspDecoder::metadataReady, this,
+                [this](int channel, const QByteArray &payload) {
+            ingestMetadataPayload(channel, payload);
+        });
         connect(dec, &RtspDecoder::statusChanged, this, &RtspSource::channelStatusChanged);
         connect(dec, &RtspDecoder::logLine, this, &RtspSource::logLine);
         connect(dec, &RtspDecoder::gaveUp, this, [this](int c) { m_gaveUp.insert(c); });
@@ -84,4 +108,47 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
     }
     m_applied = channels;
     emit logLine("RTSP", QString("채널 %1개 시작 (%2)").arg(m_decoders.size()).arg(origin));
+}
+
+void RtspSource::ingestMetadataPayload(int channel, const QByteArray &payload) {
+    if (channel < 1 || channel > 4 || payload.isEmpty()) return;
+
+    QByteArray candidate = m_metadataBuffers.value(channel);
+    candidate += payload;
+    if (candidate.size() > kMaxMetadataBufferBytes) {
+        m_metadataBuffers.remove(channel);
+        candidate = payload;
+    }
+
+    spatial_metadata::ParseResult parsed = spatial_metadata::parse(payload, channel);
+    if (!parsed.recognized && !parsed.objects.isEmpty()) {
+        parsed.recognized = true;
+    }
+
+    if (!parsed.recognized && candidate != payload) {
+        parsed = spatial_metadata::parse(candidate, channel);
+    }
+
+    if (!parsed.objects.isEmpty() || parsed.recognized) {
+        m_metadataBuffers.remove(channel);
+        m_objectsByChannel[channel] = parsed.objects;
+        QVector<SpatialObject> all;
+        for (auto it = m_objectsByChannel.cbegin(); it != m_objectsByChannel.cend(); ++it)
+            all += it.value();
+        emit objectsUpdated(all);
+
+        if (!m_metadataLogSeen.contains(channel)) {
+            m_metadataLogSeen.insert(channel);
+            int topViewCount = 0;
+            for (const SpatialObject &object : parsed.objects) {
+                if (object.hasTopViewPosition()) ++topViewCount;
+            }
+            emit logLine("OBJECT", QString("CH%1 RTSP metadata 수신 — %2개 객체 (%3개 Top-View)")
+                                         .arg(channel)
+                                         .arg(parsed.objects.size())
+                                         .arg(topViewCount));
+        }
+    } else {
+        m_metadataBuffers.insert(channel, candidate);
+    }
 }

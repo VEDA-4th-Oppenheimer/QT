@@ -6,10 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network OpenGLWidgets)
-find_package(PahoMqttCpp REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network OpenGLWidgets)
+find_package(PahoMqttCpp QUIET)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
+endif()
 
 qt_standard_project_setup()
 
@@ -26,6 +28,8 @@ set(SOURCES
     src/DevicesTab.cpp
     src/EventLogTab.cpp
     src/SettingsTab.cpp
+    src/SpatialMetadata.cpp
+    src/SpatialProjector.cpp
     src/MqttBridge.cpp
     src/ScanCloud.cpp
     src/ScanFetcher.cpp
@@ -49,6 +53,8 @@ set(HEADERS
     src/StatusBar.h
     src/CalibrationTab.h
     src/SettingsTab.h
+    src/SpatialMetadata.h
+    src/SpatialProjector.h
     src/DevicesTab.h
     src/EventLogTab.h
     src/MqttBridge.h
@@ -88,16 +94,106 @@ set_target_properties(spatial_vms PROPERTIES
 
 target_include_directories(spatial_vms PRIVATE src)
 
-if(WIN32)
-    # paho-mqttpp3 DLL을 링크할 때 헤더의 심볼을 __declspec(dllimport)로 선언해야
-    # 링크 에러(unresolved external symbol)가 안 난다.
-    target_compile_definitions(spatial_vms PRIVATE PAHO_MQTTPP_IMPORTS)
+set(SPATIAL_VMS_LIBS Qt6::Widgets Qt6::Network Qt6::OpenGLWidgets)
+
+if(TARGET PahoMqttCpp::paho-mqttpp3)
+    target_compile_definitions(spatial_vms PRIVATE USE_PAHO_MQTT)
+    list(APPEND SPATIAL_VMS_LIBS PahoMqttCpp::paho-mqttpp3)
+    if(WIN32)
+        target_compile_definitions(spatial_vms PRIVATE PAHO_MQTTPP_IMPORTS)
+    endif()
 endif()
 
-target_link_libraries(spatial_vms PRIVATE
-    Qt6::Widgets
-    Qt6::Network
-    Qt6::OpenGLWidgets
-    PahoMqttCpp::paho-mqttpp3
-    PkgConfig::FFMPEG
-)
+# FFmpeg 연동 (PkgConfig 또는 Windows MinGW GStreamer/Qt libav* 라이브러리)
+if(TARGET PkgConfig::FFMPEG)
+    target_compile_definitions(spatial_vms PRIVATE USE_FFMPEG)
+    list(APPEND SPATIAL_VMS_LIBS PkgConfig::FFMPEG)
+elseif(EXISTS "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include" AND EXISTS "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a")
+    target_compile_definitions(spatial_vms PRIVATE USE_FFMPEG)
+    target_include_directories(spatial_vms PRIVATE "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include")
+    list(APPEND SPATIAL_VMS_LIBS
+        "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a"
+        "C:/Qt/6.11.1/mingw_64/bin/libavformat.dll.a"
+        "C:/Qt/6.11.1/mingw_64/bin/libavutil.dll.a"
+        "C:/Qt/6.11.1/mingw_64/bin/libswscale.dll.a"
+    )
+endif()
+
+target_link_libraries(spatial_vms PRIVATE ${SPATIAL_VMS_LIBS})
+
+include(CTest)
+if(BUILD_TESTING)
+    qt_add_executable(spatial_metadata_tests
+        tests/spatial_metadata_tests.cpp
+        src/SpatialMetadata.cpp
+        src/SpatialMetadata.h
+        src/SpatialProjector.cpp
+        src/SpatialProjector.h
+        src/Models.h
+    )
+    target_include_directories(spatial_metadata_tests PRIVATE src)
+    target_link_libraries(spatial_metadata_tests PRIVATE Qt6::Core)
+    add_test(NAME spatial_metadata_tests COMMAND spatial_metadata_tests)
+
+    qt_add_executable(spatial_projection_tests
+        tests/spatial_projection_tests.cpp
+        src/SpatialMetadata.cpp
+        src/SpatialMetadata.h
+        src/SpatialProjector.cpp
+        src/SpatialProjector.h
+        src/Models.h
+    )
+    target_include_directories(spatial_projection_tests PRIVATE src)
+    target_link_libraries(spatial_projection_tests PRIVATE Qt6::Core)
+    add_test(NAME spatial_projection_tests COMMAND spatial_projection_tests)
+
+    if(TARGET PkgConfig::FFMPEG OR (EXISTS "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include" AND EXISTS "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a"))
+        qt_add_executable(rtsp_metadata_source_tests
+            tests/rtsp_metadata_source_tests.cpp
+            src/RtspSource.cpp
+            src/RtspSource.h
+            src/RtspDecoder.cpp
+            src/RtspDecoder.h
+            src/SpatialMetadata.cpp
+            src/SpatialMetadata.h
+            src/SpatialProjector.cpp
+            src/SpatialProjector.h
+            src/Models.h
+            src/ConfigPath.h
+        )
+        target_include_directories(rtsp_metadata_source_tests PRIVATE src)
+        if(TARGET PkgConfig::FFMPEG)
+            target_link_libraries(rtsp_metadata_source_tests PRIVATE Qt6::Core Qt6::Gui PkgConfig::FFMPEG)
+        else()
+            target_compile_definitions(rtsp_metadata_source_tests PRIVATE USE_FFMPEG)
+            target_include_directories(rtsp_metadata_source_tests PRIVATE "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include")
+            target_link_libraries(rtsp_metadata_source_tests PRIVATE Qt6::Core Qt6::Gui
+                "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a"
+                "C:/Qt/6.11.1/mingw_64/bin/libavformat.dll.a"
+                "C:/Qt/6.11.1/mingw_64/bin/libavutil.dll.a"
+                "C:/Qt/6.11.1/mingw_64/bin/libswscale.dll.a"
+            )
+        endif()
+        add_test(NAME rtsp_metadata_source_tests COMMAND rtsp_metadata_source_tests)
+    endif()
+
+    qt_add_executable(spatial_metadata_replay
+        tools/spatial_metadata_replay.cpp
+        src/SpatialMetadata.cpp
+        src/SpatialMetadata.h
+        src/SpatialProjector.cpp
+        src/SpatialProjector.h
+        src/Models.h
+        src/Theme.h
+        src/TopViewPanel.cpp
+        src/TopViewPanel.h
+        src/TopViewWidget.cpp
+        src/TopViewWidget.h
+        src/ScanView3D.cpp
+        src/ScanView3D.h
+        src/ScanCloud.cpp
+        src/ScanCloud.h
+    )
+    target_include_directories(spatial_metadata_replay PRIVATE src)
+    target_link_libraries(spatial_metadata_replay PRIVATE Qt6::Widgets Qt6::OpenGLWidgets)
+endif()

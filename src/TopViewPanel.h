@@ -31,6 +31,8 @@ public:
     // 3D 칸의 파일 목록. MainWindow 가 ScanFetcher 결과를 넘겨준다.
     void setScanList(const QVector<ScanEntry> &entries, const QString &note);
     void showScanList();      // 목록 화면으로
+    void showMap2D();         // 객체/점군 2D replay 및 화면 전환용
+    void showCloud3D();       // 객체/점군 3D replay 및 화면 전환용
 
     // 별도 창(전체화면)으로 빠져 있는지. 헤더 버튼 라벨을 상태에 맞춘다.
     void setDetached(bool detached);
@@ -51,6 +53,7 @@ private:
     TopViewWidget *m_map;
     QLabel *m_coverage;
     QLabel *m_cloudInfo;
+    QLabel *m_objectInfo;
     ScanView3D *m_view3d;
     QListWidget *m_list;
     QLabel *m_listNote;

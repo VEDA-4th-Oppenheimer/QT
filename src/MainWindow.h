@@ -90,16 +90,7 @@ private:
 
     // cmd/scan 의 sensor_height_mm. QSettings 에 남겨 재실행해도 유지한다.
     // 좌표에는 안 들어가고 .pcd 헤더 메타데이터로만 나간다(계약 §3.1).
-    // 지면 → 팬/틸트 회전축 교점(mm). 데몬의 SCAN_DEF_HEIGHT_MM 과 같은 값이다.
-    //
-    // 2400 을 쓰던 시절이 있었는데 추정값이었고, 2026-08-11 스캔의 nadir 400열로
-    // 실측하니 1805 였다(퍼짐 12mm). 600mm 차이다. 좌표에는 안 들어가지만 카메라
-    // 단이 이걸 믿고 바닥평면을 놓으므로 그만큼 어긋난다.
-    //
-    // 주의: 이 값은 QSettings 에 저장된다. 한 번 잘못된 값으로 스캔하면 그 PC 에
-    //   계속 남으므로, 기본값만 고쳐서는 이미 쓰던 PC 가 안 바뀐다.
-    //   모드 → 센서 높이 설정… 에서 다시 넣어야 한다.
-    int m_sensorHeightMm = 1805;
+    int m_sensorHeightMm = 2400;
 
     // 테마 전환 시 위젯을 다시 만들기 때문에(rebuildUi), 새 위젯이 다음 업데이트
     // 전까지 기본값(OFFLINE 등)으로 잠깐 보이지 않도록 마지막 값을 캐싱해둔다.
@@ -108,8 +99,10 @@ private:
     ScanProgress m_lastProgress;
     ScanResult   m_lastResult;
     ScanCloud    m_lastCloud;
+    QVector<SpatialObject> m_lastObjects;
     bool m_haveDaemonState = false, m_haveImu = false, m_haveProgress = false, m_haveResult = false;
-    bool m_haveCloud = false;
+    bool m_haveCloud = false, m_haveObjects = false;
+    bool m_rtspMetadataActive = false;
     // 브로커 연결 상태도 캐싱해야 한다 — 연결이 유지되는 동안에는 신호가 다시
     // 오지 않아서, 테마 전환으로 TopBar 를 새로 만들면 생성자 기본값
     // (DISCONNECTED)에 갇힌 채 영영 정정되지 않는다.
