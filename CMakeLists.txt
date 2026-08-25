@@ -130,6 +130,13 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/config"
                 "$<TARGET_FILE_DIR:spatial_vms>/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "C:/Qt/6.11.1/mingw_64/bin/avutil-59.dll"
+                "C:/Qt/6.11.1/mingw_64/bin/avcodec-61.dll"
+                "C:/Qt/6.11.1/mingw_64/bin/avformat-61.dll"
+                "C:/Qt/6.11.1/mingw_64/bin/swscale-8.dll"
+                "C:/Qt/6.11.1/mingw_64/bin/swresample-5.dll"
+                "$<TARGET_FILE_DIR:spatial_vms>"
     )
 endif()
 
