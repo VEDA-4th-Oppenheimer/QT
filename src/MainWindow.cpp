@@ -16,6 +16,7 @@
 #include "ScanListDialog.h"
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QPushButton>
 #include "CameraConfig.h"
 #include "Theme.h"
 #include "ConfigPath.h"
@@ -828,14 +829,24 @@ void MainWindow::fetchCalibrationResultFromCamera() {
                                   .arg(completedJobs);
 
             if (status == QStringLiteral("candidate_ready") || completedJobs > 0) {
-                infoMsg += QString::fromUtf8("카메라 웹에서 자동 캘리브레이션이 완료되었습니다.\n다운로드받은 result.json 파일을 [로컬 RT 파일 열기]로 선택해 주시면 즉시 적용됩니다.");
+                infoMsg += QString::fromUtf8("카메라에서 자동 캘리브레이션 연산이 성공적으로 완료되었습니다 (candidate_ready)!\n\n웹에서 다운로드한 'result.json' 또는 'calibration_result.json' 파일을 선택해 주시면 2D/3D Top-View에 즉시 적용됩니다.");
+                QMessageBox msgBox(this);
+                msgBox.setWindowTitle(QString::fromUtf8("카메라 캘리브레이션 완료"));
+                msgBox.setText(infoMsg);
+                msgBox.setIcon(QMessageBox::Information);
+                QAbstractButton *btnSelect = msgBox.addButton(QString::fromUtf8("📁 파일 선택하여 즉시 적용"), QMessageBox::ActionRole);
+                msgBox.addButton(QString::fromUtf8("닫기"), QMessageBox::RejectRole);
+                msgBox.exec();
+                if (msgBox.clickedButton() == btnSelect) {
+                    openCalibrationResultFile();
+                }
             } else if (status == QStringLiteral("calibration_running")) {
                 infoMsg += QString::fromUtf8("현재 카메라에서 캘리브레이션 연산이 진행 중입니다. 잠시 후 다시 시도해 주세요.");
+                QMessageBox::information(this, QString::fromUtf8("카메라 캘리브레이션 진행 중"), infoMsg);
             } else {
                 infoMsg += QString::fromUtf8("카메라 웹(http://%1/home/setup/opensdk/html/calibration/index.html?AppName=calibration)에서 스캔 파일을 선택하고 [시작]을 눌러 캘리브레이션을 진행해 주세요.").arg(host);
+                QMessageBox::information(this, QString::fromUtf8("카메라 캘리브레이션 대기 중"), infoMsg);
             }
-
-            QMessageBox::information(this, QString::fromUtf8("카메라 캘리브레이션 상태"), infoMsg);
         }
     });
 }
