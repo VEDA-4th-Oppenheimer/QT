@@ -125,6 +125,14 @@ endif()
 
 target_link_libraries(spatial_vms PRIVATE ${SPATIAL_VMS_LIBS})
 
+if(WIN32)
+    add_custom_command(TARGET spatial_vms POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/config"
+                "$<TARGET_FILE_DIR:spatial_vms>/config"
+    )
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     qt_add_executable(spatial_metadata_tests
