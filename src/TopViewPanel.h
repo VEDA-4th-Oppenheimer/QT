@@ -38,6 +38,7 @@ signals:
     void openScanFileRequested();
     void showScanListDialogRequested();
     void openCalibResultRequested();
+    void fetchCalibResultFromCameraRequested();
     // 헤더의 전체화면 버튼, 또는 지도/헤더/통계바 더블클릭. MainWindow 가 이
     // 패널을 별도 창으로 빼거나 대시보드로 되돌린다.
     void fullScreenToggleRequested();

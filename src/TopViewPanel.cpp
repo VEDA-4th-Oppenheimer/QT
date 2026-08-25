@@ -97,13 +97,25 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     m_btnScan->setMenu(scanMenu);
     hl->addWidget(m_btnScan);
 
-    // 2. [📐 캘리브레이션 RT] 버튼 (result.json / calibration_result.json 불러오기)
-    m_btnCalib = new QPushButton(QString::fromUtf8("📐 캘리브레이션 RT"), head);
+    // 2. [📐 캘리브레이션 RT ▾] 버튼 (로컬 파일 열기 / CCTV 카메라에서 가져오기 메뉴)
+    m_btnCalib = new QPushButton(QString::fromUtf8("📐 캘리브레이션 RT ▾"), head);
     m_btnCalib->setFixedHeight(22);
     m_btnCalib->setCursor(Qt::PointingHandCursor);
     m_btnCalib->setStyleSheet(btnCss);
-    m_btnCalib->setToolTip(QString::fromUtf8("최신 캘리브레이션 결과 (result.json / calibration_result.json) 불러오기"));
-    connect(m_btnCalib, &QPushButton::clicked, this, &TopViewPanel::openCalibResultRequested);
+    m_btnCalib->setToolTip(QString::fromUtf8("캘리브레이션 결과 (RT) 불러오기 (로컬 / CCTV 카메라)"));
+
+    auto *calibMenu = new QMenu(m_btnCalib);
+    calibMenu->setStyleSheet(QString(
+        "QMenu { background:%1; border:1px solid %2; padding:4px; }"
+        "QMenu::item { padding:6px 14px; font-family:'JetBrains Mono','D2Coding',monospace; font-size:11px; color:%3; border-radius:3px; }"
+        "QMenu::item:selected { background:%4; color:%5; }")
+        .arg(Theme::Panel.name(), Theme::Border.name(), Theme::Text2.name(), Theme::AccentBg.name(), Theme::AccentBright.name()));
+
+    auto *actCalibLocal = calibMenu->addAction(QString::fromUtf8("📁 로컬 RT 결과 파일 열기 (result.json)..."));
+    auto *actCalibCamera = calibMenu->addAction(QString::fromUtf8("🌐 CCTV 카메라에서 최신 RT 가져오기 (OpenSDK)..."));
+    connect(actCalibLocal, &QAction::triggered, this, &TopViewPanel::openCalibResultRequested);
+    connect(actCalibCamera, &QAction::triggered, this, &TopViewPanel::fetchCalibResultFromCameraRequested);
+    m_btnCalib->setMenu(calibMenu);
     hl->addWidget(m_btnCalib);
 
     hl->addSpacing(4);

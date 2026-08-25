@@ -61,6 +61,7 @@ private:
     void configureScanFetcher();
     void openScanFile();
     void openCalibrationResultFile();
+    void fetchCalibrationResultFromCamera();
     void showScanListDialog();
 
     TopBar         *m_topBar    = nullptr;

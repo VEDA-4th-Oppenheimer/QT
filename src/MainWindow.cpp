@@ -45,6 +45,9 @@
 #include <QUrl>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
 
 namespace {
 QString sourceForTag(const QString &tag) {
@@ -357,6 +360,7 @@ void MainWindow::rebuildUi() {
     connect(m_topView, &TopViewPanel::openScanFileRequested, this, &MainWindow::openScanFile);
     connect(m_topView, &TopViewPanel::showScanListDialogRequested, this, &MainWindow::showScanListDialog);
     connect(m_topView, &TopViewPanel::openCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
+    connect(m_topView, &TopViewPanel::fetchCalibResultFromCameraRequested, this, &MainWindow::fetchCalibrationResultFromCamera);
     connect(m_topView, &TopViewPanel::fullScreenToggleRequested, this, &MainWindow::toggleTopViewFullScreen);
 }
 
@@ -730,6 +734,92 @@ void MainWindow::openCalibrationResultFile() {
         QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
                              QString::fromUtf8("캘리브레이션 결과를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
     }
+}
+
+void MainWindow::fetchCalibrationResultFromCamera() {
+    QString host;
+    int channels = 0;
+    cameraSummary(&host, &channels);
+    if (host.trimmed().isEmpty()) {
+        host = QStringLiteral("172.20.32.43");
+    }
+
+    bool ok = false;
+    const QString inputHost = QInputDialog::getText(
+        this, QString::fromUtf8("CCTV 카메라 OpenSDK 연결"),
+        QString::fromUtf8("CCTV 카메라 IP / 호스트 주소:"),
+        QLineEdit::Normal, host, &ok);
+    if (!ok || inputHost.trimmed().isEmpty()) return;
+    const QString targetHost = inputHost.trimmed();
+
+    appendLog("CALIB", QString::fromUtf8("CCTV 카메라 (%1) OpenSDK 캘리브레이션 상태 조회 시작...").arg(targetHost));
+
+    auto *mgr = new QNetworkAccessManager(this);
+    const QUrl statusUrl(QStringLiteral("http://%1/opensdk/calibration/status").arg(targetHost));
+    QNetworkRequest req(statusUrl);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QNetworkReply *reply = mgr->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, mgr, targetHost] {
+        reply->deleteLater();
+        mgr->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            const QString err = QString::fromUtf8("카메라 (%1) OpenSDK 연결 실패: %2")
+                                    .arg(targetHost, reply->errorString());
+            appendLog("CALIB", err);
+            QMessageBox::warning(this, QString::fromUtf8("카메라 연결 실패"),
+                                 QString::fromUtf8("카메라 OpenSDK API에 연결하지 못했습니다.\n\nURL: http://%1/opensdk/calibration/status\n오류: %2\n\n카메라 IP 및 OpenSDK 실행 여부를 확인해 주세요.")
+                                     .arg(targetHost, reply->errorString()));
+            return;
+        }
+
+        const QByteArray responseData = reply->readAll();
+        const QJsonDocument doc = QJsonDocument::fromJson(responseData);
+        if (!doc.isObject()) {
+            appendLog("CALIB", QString::fromUtf8("카메라 응답 JSON 파싱 실패"));
+            QMessageBox::warning(this, QString::fromUtf8("응답 형식 오류"),
+                                 QString::fromUtf8("카메라로부터 올바른 JSON 응답을 받지 못했습니다."));
+            return;
+        }
+
+        const QJsonObject obj = doc.object();
+        const QString status = obj.value(QStringLiteral("status")).toString();
+        const QString sessionId = obj.value(QStringLiteral("session_id")).toString();
+        const QString lastFile = obj.value(QStringLiteral("last_file_name")).toString();
+        const int completedJobs = obj.value(QStringLiteral("completed_jobs")).toInt();
+
+        appendLog("CALIB", QString::fromUtf8("카메라 캘리브레이션 상태: %1 (세션: %2, 완료: %3건)")
+                                .arg(status, sessionId).arg(completedJobs));
+
+        // 캘리브레이션 결과 적용 시도
+        QString summary;
+        bool applied = SpatialProjector::instance().loadCalibrationResultData(responseData, 1, &summary);
+
+        if (applied) {
+            appendLog("CALIB", QString::fromUtf8("카메라 OpenSDK 최신 RT 적용 완료: %1").arg(summary));
+            QMessageBox::information(this, QString::fromUtf8("CCTV 캘리브레이션 RT 적용 완료"),
+                                     QString::fromUtf8("카메라 (%1)로부터 최신 캘리브레이션 결과를 성공적으로 적용했습니다.\n\n%2")
+                                         .arg(targetHost, summary));
+            if (m_topView) m_topView->update();
+        } else {
+            QString infoMsg = QString::fromUtf8("카메라 OpenSDK 상태:\n- 상태: %1\n- 세션 ID: %2\n- 최근 파일: %3\n- 완료 작업: %4건\n\n")
+                                  .arg(status.isEmpty() ? QStringLiteral("-") : status,
+                                       sessionId.isEmpty() ? QStringLiteral("-") : sessionId,
+                                       lastFile.isEmpty() ? QStringLiteral("-") : lastFile)
+                                  .arg(completedJobs);
+
+            if (status == QStringLiteral("candidate_ready") || completedJobs > 0) {
+                infoMsg += QString::fromUtf8("카메라 웹에서 자동 캘리브레이션이 완료되었습니다.\n다운로드받은 result.json 파일을 [로컬 RT 파일 열기]로 선택해 주시면 즉시 적용됩니다.");
+            } else if (status == QStringLiteral("calibration_running")) {
+                infoMsg += QString::fromUtf8("현재 카메라에서 캘리브레이션 연산이 진행 중입니다. 잠시 후 다시 시도해 주세요.");
+            } else {
+                infoMsg += QString::fromUtf8("카메라 웹(http://%1/home/setup/opensdk/html/calibration/index.html?AppName=calibration)에서 스캔 파일을 선택하고 [시작]을 눌러 캘리브레이션을 진행해 주세요.").arg(targetHost);
+            }
+
+            QMessageBox::information(this, QString::fromUtf8("카메라 캘리브레이션 상태"), infoMsg);
+        }
+    });
 }
 
 void MainWindow::showScanListDialog() {
