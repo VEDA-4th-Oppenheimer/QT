@@ -262,8 +262,11 @@ void MqttBridge::connection_lost(const std::string &cause) {
 void MqttBridge::message_arrived(mqtt::const_message_ptr msg) {
     if (!msg) return;
     const QString topic = QString::fromStdString(msg->get_topic());
-    const QByteArray payload(static_cast<const char *>(msg->get_payload()),
-                             static_cast<int>(msg->get_payload_len()));
+    /* 주의: get_payload() 는 const binary&(= std::string) 를 돌려준다. 예전
+     *   paho-mqtt-cpp 의 (const void*, get_payload_len()) 조합은 지금 헤더에
+     *   없어서 컴파일이 깨진다. data()/size() 로 받는다. */
+    const std::string &raw = msg->get_payload();
+    const QByteArray payload(raw.data(), static_cast<int>(raw.size()));
     QMetaObject::invokeMethod(this, [this, topic, payload] {
         onRawMessage(topic, payload);
     }, Qt::QueuedConnection);
