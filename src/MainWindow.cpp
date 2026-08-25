@@ -14,6 +14,7 @@
 #include "EnrollDialog.h"
 #include "ScanFetcher.h"
 #include <QFileDialog>
+#include <QMessageBox>
 #include "CameraConfig.h"
 #include "Theme.h"
 #include "ConfigPath.h"
@@ -186,6 +187,7 @@ void MainWindow::rebuildUi() {
     connect(m_settingsTab, &SettingsTab::topViewFullScreenToggled, this, &MainWindow::toggleTopViewFullScreen);
     connect(m_settingsTab, &SettingsTab::sensorHeightRequested, this, &MainWindow::editSensorHeight);
     connect(m_settingsTab, &SettingsTab::openScanFileRequested, this, &MainWindow::openScanFile);
+    connect(m_settingsTab, &SettingsTab::loadCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
     connect(m_settingsTab, &SettingsTab::logoutRequested, this, &MainWindow::logout);
 
     // 테마를 바꾸면 여기까지 다시 오므로, 보고 있던 탭으로 되돌려 놓는다.
@@ -710,6 +712,27 @@ void MainWindow::openScanFile() {
         QString::fromUtf8("포인트클라우드 (*.pcd);;모든 파일 (*)"));
     if (path.isEmpty()) return;
     m_scanFetcher->loadLocal(path);
+}
+
+void MainWindow::openCalibrationResultFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QString::fromUtf8("OpenSDK 캘리브레이션 결과 파일 열기"), QString(),
+        QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
+    if (path.isEmpty()) return;
+
+    QString summary;
+    const bool success = SpatialProjector::instance().loadCalibrationResultJson(path, 1, &summary);
+    if (success) {
+        appendLog("CALIB", QString::fromUtf8("최신 캘리브레이션 결과 불러오기 성공: %1").arg(path));
+        appendLog("CALIB", summary);
+        QMessageBox::information(this, QString::fromUtf8("캘리브레이션 적용 완료"),
+                                 QString::fromUtf8("최신 캘리브레이션 결과가 성공적으로 적용되었습니다.\n\n%1").arg(summary));
+        if (m_topView) m_topView->update();
+    } else {
+        appendLog("CALIB", QString::fromUtf8("캘리브레이션 결과 불러오기 실패: %1").arg(summary));
+        QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
+                             QString::fromUtf8("캘리브레이션 결과를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
+    }
 }
 
 void MainWindow::appendLog(const QString &tag, const QString &msg) {

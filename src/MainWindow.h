@@ -59,6 +59,7 @@ private:
     // 스캔 완료(state/scan) 시 .pcd 를 받아 Top-View 에 깔기까지의 배선.
     void configureScanFetcher();
     void openScanFile();
+    void openCalibrationResultFile();
 
     TopBar         *m_topBar    = nullptr;
     TiltBanner     *m_banner    = nullptr;

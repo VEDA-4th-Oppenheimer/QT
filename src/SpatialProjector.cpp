@@ -162,6 +162,146 @@ bool SpatialProjector::loadProfiles(const QString &jsonFilePath) {
     return true;
 }
 
+bool SpatialProjector::loadCalibrationResultJson(const QString &filePath, int channel, QString *outSummary) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (outSummary) *outSummary = QStringLiteral("파일을 열 수 없습니다: ") + filePath;
+        return false;
+    }
+    const QByteArray data = file.readAll();
+    file.close();
+    return loadCalibrationResultData(data, channel, outSummary);
+}
+
+bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int channel, QString *outSummary) {
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &err);
+    if (doc.isNull() || !doc.isObject()) {
+        if (outSummary) *outSummary = QStringLiteral("유효하지 않은 JSON 데이터입니다: ") + err.errorString();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    CameraProfile cp = profile(channel);
+    cp.channel = channel;
+    bool haveR = false;
+    bool haveT = false;
+
+    // 1. OpenSDK / Auto-Calibration `calibration_result.json` 형식 파싱
+    if (root.contains("visualization_t_camera_lidar") && root.value("visualization_t_camera_lidar").isObject()) {
+        const QJsonObject vt = root.value("visualization_t_camera_lidar").toObject();
+        if (vt.contains("rotation_matrix") && vt.value("rotation_matrix").isArray()) {
+            const QJsonArray rMat = vt.value("rotation_matrix").toArray();
+            if (rMat.size() == 3) {
+                int idx = 0;
+                for (int row = 0; row < 3; ++row) {
+                    const QJsonArray rRow = rMat.at(row).toArray();
+                    for (int col = 0; col < 3 && col < rRow.size(); ++col) {
+                        cp.r[idx++] = rRow.at(col).toDouble();
+                    }
+                }
+                if (idx == 9) haveR = true;
+            }
+        }
+        if (vt.contains("translation_m") && vt.value("translation_m").isArray()) {
+            const QJsonArray tArr = vt.value("translation_m").toArray();
+            if (tArr.size() == 3) {
+                for (int i = 0; i < 3; ++i) cp.t[i] = tArr.at(i).toDouble();
+                haveT = true;
+            }
+        }
+    }
+
+    // 2. candidate_results 배열에서 선택된 후보 파싱 (fallback)
+    if ((!haveR || !haveT) && root.contains("candidate_results") && root.value("candidate_results").isArray()) {
+        const QJsonArray cands = root.value("candidate_results").toArray();
+        int selIdx = root.value("selected_candidate").toInt(0);
+        if (selIdx < 0 || selIdx >= cands.size()) selIdx = 0;
+        if (selIdx < cands.size()) {
+            const QJsonObject cand = cands.at(selIdx).toObject();
+            const QJsonObject est = cand.contains("estimated") ? cand.value("estimated").toObject()
+                                                               : cand.value("diagnostic_candidate").toObject();
+            if (est.contains("rotation_matrix") && est.value("rotation_matrix").isArray()) {
+                const QJsonArray rMat = est.value("rotation_matrix").toArray();
+                if (rMat.size() == 3) {
+                    int idx = 0;
+                    for (int row = 0; row < 3; ++row) {
+                        const QJsonArray rRow = rMat.at(row).toArray();
+                        for (int col = 0; col < 3 && col < rRow.size(); ++col) {
+                            cp.r[idx++] = rRow.at(col).toDouble();
+                        }
+                    }
+                    if (idx == 9) haveR = true;
+                }
+            }
+            if (est.contains("translation_m") && est.value("translation_m").isArray()) {
+                const QJsonArray tArr = est.value("translation_m").toArray();
+                if (tArr.size() == 3) {
+                    for (int i = 0; i < 3; ++i) cp.t[i] = tArr.at(i).toDouble();
+                    haveT = true;
+                }
+            }
+        }
+    }
+
+    // 3. 단순 { rotation_matrix: [...], translation_vector / translation_m: [...] } 형식 파싱
+    if ((!haveR || !haveT) && root.contains("rotation_matrix")) {
+        const QJsonArray rMat = root.value("rotation_matrix").toArray();
+        if (rMat.size() == 3) {
+            int idx = 0;
+            for (int row = 0; row < 3; ++row) {
+                const QJsonArray rRow = rMat.at(row).toArray();
+                for (int col = 0; col < 3 && col < rRow.size(); ++col) {
+                    cp.r[idx++] = rRow.at(col).toDouble();
+                }
+            }
+            if (idx == 9) haveR = true;
+        }
+        const QString tKey = root.contains("translation_m") ? QStringLiteral("translation_m")
+                                                           : QStringLiteral("translation_vector");
+        if (root.contains(tKey) && root.value(tKey).isArray()) {
+            const QJsonArray tArr = root.value(tKey).toArray();
+            if (tArr.size() == 3) {
+                for (int i = 0; i < 3; ++i) cp.t[i] = tArr.at(i).toDouble();
+                haveT = true;
+            }
+        }
+    }
+
+    // 4. Intrinsics (내부 파라미터) 업데이트 (존재하는 경우)
+    if (root.contains("active_intrinsics") && root.value("active_intrinsics").isObject()) {
+        const QJsonObject inObj = root.value("active_intrinsics").toObject();
+        if (inObj.contains("fx")) cp.fx = inObj.value("fx").toDouble(cp.fx);
+        if (inObj.contains("fy")) cp.fy = inObj.value("fy").toDouble(cp.fy);
+        if (inObj.contains("cx")) cp.cx = inObj.value("cx").toDouble(cp.cx);
+        if (inObj.contains("cy")) cp.cy = inObj.value("cy").toDouble(cp.cy);
+        if (inObj.contains("resolution") && inObj.value("resolution").isArray()) {
+            const QJsonArray res = inObj.value("resolution").toArray();
+            if (res.size() >= 2) {
+                cp.imageWidth = res.at(0).toInt(cp.imageWidth);
+                cp.imageHeight = res.at(1).toInt(cp.imageHeight);
+            }
+        }
+    }
+
+    if (!haveR || !haveT) {
+        if (outSummary) *outSummary = QStringLiteral("JSON에서 회전(R) 및 이동(t) 매트릭스를 찾을 수 없습니다.");
+        return false;
+    }
+
+    cp.enabled = true;
+    m_profiles.insert(channel, cp);
+
+    const QString summaryText = QString::fromUtf8("CH%1 최신 캘리브레이션 R,t 성공적 적용\n"
+                                                  "t = [%1, %2, %3] m")
+                                    .arg(cp.t[0], 0, 'f', 4)
+                                    .arg(cp.t[1], 0, 'f', 4)
+                                    .arg(cp.t[2], 0, 'f', 4);
+    if (outSummary) *outSummary = summaryText;
+
+    return true;
+}
+
 bool SpatialProjector::projectImageToGround(int channel,
                                            double u,
                                            double v,

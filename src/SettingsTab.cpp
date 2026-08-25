@@ -66,6 +66,7 @@ SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) 
     addButton(QStringLiteral("CCTV 재연결"), &SettingsTab::cameraReconnectRequested);
     addButton(QStringLiteral("센서 높이"), &SettingsTab::sensorHeightRequested);
     addButton(QStringLiteral("스캔 파일 열기"), &SettingsTab::openScanFileRequested);
+    addButton(QStringLiteral("캘리브레이션 결과(result.json) 불러오기"), &SettingsTab::loadCalibResultRequested);
     addButton(QStringLiteral("TOP-VIEW 전체화면"), &SettingsTab::topViewFullScreenToggled);
     root->addLayout(buttons);
 

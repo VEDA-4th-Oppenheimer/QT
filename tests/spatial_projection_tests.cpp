@@ -121,10 +121,47 @@ void test30SecondsContinuousNoBoundaryEscape() {
     std::cout << "[PASS] test30SecondsContinuousNoBoundaryEscape: 900 frames (30s) tested, 0 boundary violations, perfectly stable!\n";
 }
 
+void testLoadCalibrationResultJson() {
+    SpatialProjector &projector = SpatialProjector::instance();
+
+    // OpenSDK / auto_calib 출력 형식의 JSON 데이터 테스트
+    const QByteArray sampleResultJson = R"({
+        "status": "PASS",
+        "active_intrinsics": {
+            "cx": 1337.029,
+            "cy": 745.370,
+            "fx": 2033.901,
+            "fy": 2037.779,
+            "resolution": [2592, 1520]
+        },
+        "visualization_t_camera_lidar": {
+            "rotation_matrix": [
+                [-0.89935, -0.02167, 0.43668],
+                [0.03164, 0.99292, 0.11446],
+                [-0.43607, 0.11676, -0.89230]
+            ],
+            "translation_m": [0.0515, 0.0786, 0.0353]
+        }
+    })";
+
+    QString summary;
+    bool ok = projector.loadCalibrationResultData(sampleResultJson, 1, &summary);
+    assert(ok);
+    assert(summary.contains("성공적"));
+
+    CameraProfile cp = projector.profile(1);
+    assert(std::abs(cp.t[0] - 0.0515) < 1e-3);
+    assert(std::abs(cp.t[1] - 0.0786) < 1e-3);
+    assert(std::abs(cp.t[2] - 0.0353) < 1e-3);
+
+    std::cout << "[PASS] testLoadCalibrationResultJson: loaded result.json format successfully!\n";
+}
+
 int main() {
     testSpatialProjectorCH1();
     testSpatialMetadataOnvifWithProjection();
     test30SecondsContinuousNoBoundaryEscape();
-    std::cout << "All spatial projection tests (including 30s stability) PASS!\n";
+    testLoadCalibrationResultJson();
+    std::cout << "All spatial projection tests (including result.json loading) PASS!\n";
     return 0;
 }

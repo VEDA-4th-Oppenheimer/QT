@@ -72,6 +72,10 @@ public:
     // Load calibration profiles from JSON file
     bool loadProfiles(const QString &filePath);
 
+    // OpenSDK 또는 자동 캘리브레이션 산출물(result.json / calibration_result.json) 로드 및 즉시 반영
+    bool loadCalibrationResultJson(const QString &filePath, int channel = 1, QString *outSummary = nullptr);
+    bool loadCalibrationResultData(const QByteArray &jsonData, int channel = 1, QString *outSummary = nullptr);
+
     // 픽셀 좌표 (u, v)를 렌즈 역왜곡 보정(Undistort) 후 지면 평면과의 교점으로 투영
     bool projectImageToGround(int channel,
                               double u,

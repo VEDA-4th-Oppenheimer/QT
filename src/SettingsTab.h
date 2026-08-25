@@ -41,6 +41,7 @@ signals:
     void topViewFullScreenToggled();
     void sensorHeightRequested();
     void openScanFileRequested();
+    void loadCalibResultRequested();
     void logoutRequested();
 
 private:
