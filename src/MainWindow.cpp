@@ -58,6 +58,18 @@
 #include <QAuthenticator>
 
 namespace {
+
+/* 카메라 OpenSDK(캘리브레이션 API) 접속 스킴.
+ *
+ * ⚠️ 브링업 편의로 http 를 쓰는 중이다. 되돌릴 때는 이 한 줄만 "https" 로
+ *   바꾸면 되고, URL 조립과 스킴 검증이 전부 이 상수를 본다.
+ *
+ * ⚠️ http 로 두면 카메라 계정/비밀번호가 Basic 인증 헤더에 실려 **평문으로**
+ *   나간다(base64 는 인코딩이지 암호화가 아니다). 같은 네트워크에 있는
+ *   누구든 그대로 읽을 수 있다. 데모·제출본으로 나가기 전에 https 로
+ *   되돌릴 것. */
+constexpr const char *kCalibScheme = "http";
+
 QString sourceForTag(const QString &tag) {
     if (tag == "SCAN" || tag == "EXPORT")
         return "RPi4B";
@@ -781,20 +793,22 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
         QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
     if (savePath.isEmpty()) return;
 
-    const QString apiBase = QStringLiteral("https://%1/opensdk/calibration").arg(host);
+    const QString apiBase = QStringLiteral("%1://%2/opensdk/calibration")
+                                .arg(QLatin1String(kCalibScheme), host);
     const QString relativePath = downloadUrl.trimmed();
     QUrl resultUrl;
     const QUrl suppliedUrl(relativePath);
     if (!suppliedUrl.isRelative()) {
         resultUrl = suppliedUrl;
     } else if (relativePath.startsWith(QStringLiteral("/opensdk/"))) {
-        resultUrl = QUrl(QStringLiteral("https://%1%2").arg(host, relativePath));
+        resultUrl = QUrl(QStringLiteral("%1://%2%3")
+                             .arg(QLatin1String(kCalibScheme), host, relativePath));
     } else {
         const QString separator = relativePath.startsWith('/') ? QString() : QStringLiteral("/");
         resultUrl = QUrl(apiBase + separator + relativePath);
     }
 
-    if (!resultUrl.isValid() || resultUrl.scheme() != QStringLiteral("https") ||
+    if (!resultUrl.isValid() || resultUrl.scheme() != QLatin1String(kCalibScheme) ||
         resultUrl.host().compare(host, Qt::CaseInsensitive) != 0) {
         const QString error = QString::fromUtf8("서버가 잘못된 결과 다운로드 주소를 반환했습니다: %1")
                                   .arg(downloadUrl);
@@ -922,7 +936,8 @@ void MainWindow::showCameraCalibDialog() {
         auth->setPassword(password);
     });
 
-    const QUrl resultsUrl(QStringLiteral("https://%1/opensdk/calibration/results").arg(host));
+    const QUrl resultsUrl(QStringLiteral("%1://%2/opensdk/calibration/results")
+                              .arg(QLatin1String(kCalibScheme), host));
 
     QNetworkRequest request(resultsUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
