@@ -781,20 +781,20 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
         QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
     if (savePath.isEmpty()) return;
 
-    const QString apiBase = QStringLiteral("https://%1/opensdk/calibration").arg(host);
+    const QString apiBase = QStringLiteral("http://%1/opensdk/calibration").arg(host);
     const QString relativePath = downloadUrl.trimmed();
     QUrl resultUrl;
     const QUrl suppliedUrl(relativePath);
     if (!suppliedUrl.isRelative()) {
         resultUrl = suppliedUrl;
     } else if (relativePath.startsWith(QStringLiteral("/opensdk/"))) {
-        resultUrl = QUrl(QStringLiteral("https://%1%2").arg(host, relativePath));
+        resultUrl = QUrl(QStringLiteral("http://%1%2").arg(host, relativePath));
     } else {
         const QString separator = relativePath.startsWith('/') ? QString() : QStringLiteral("/");
         resultUrl = QUrl(apiBase + separator + relativePath);
     }
 
-    if (!resultUrl.isValid() || resultUrl.scheme() != QStringLiteral("https") ||
+    if (!resultUrl.isValid() ||
         resultUrl.host().compare(host, Qt::CaseInsensitive) != 0) {
         const QString error = QString::fromUtf8("서버가 잘못된 결과 다운로드 주소를 반환했습니다: %1")
                                   .arg(downloadUrl);
@@ -856,12 +856,20 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
             return;
         }
 
+        // 캘리브레이션 결과 자동 적용
+        QString summary;
+        bool applied = SpatialProjector::instance().loadCalibrationResultData(responseData, 1, &summary);
+
         appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 다운로드 완료: %1 -> %2")
                                .arg(sessionId, savePath));
-        QMessageBox::information(this,
-                                 QString::fromUtf8("다운로드 완료"),
-                                 QString::fromUtf8("캘리브레이션 결과를 저장했습니다.\n\n%1")
-                                     .arg(savePath));
+
+        QString msg = QString::fromUtf8("캘리브레이션 결과를 저장했습니다.\n\n%1").arg(savePath);
+        if (applied) {
+            msg += QString::fromUtf8("\n\n✅ 3D/2D Top-View 에 즉시 적용되었습니다:\n%1").arg(summary);
+            if (m_topView) m_topView->update();
+        }
+
+        QMessageBox::information(this, QString::fromUtf8("다운로드 및 적용 완료"), msg);
     });
 }
 
@@ -922,7 +930,7 @@ void MainWindow::showCameraCalibDialog() {
         auth->setPassword(password);
     });
 
-    const QUrl resultsUrl(QStringLiteral("https://%1/opensdk/calibration/results").arg(host));
+    const QUrl resultsUrl(QStringLiteral("http://%1/opensdk/calibration/results").arg(host));
 
     QNetworkRequest request(resultsUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
