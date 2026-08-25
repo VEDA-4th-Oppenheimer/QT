@@ -36,6 +36,7 @@ set(SOURCES
     src/ScanView3D.cpp
     src/EnrollDialog.cpp
     src/DemoBridge.cpp
+    src/ScanListDialog.cpp
     src/RtspDecoder.cpp
     src/RtspSource.cpp
 )
@@ -60,6 +61,7 @@ set(HEADERS
     src/MqttBridge.h
     src/ScanCloud.h
     src/ScanFetcher.h
+    src/ScanListDialog.h
     src/ScanView3D.h
     src/EnrollDialog.h
     src/DemoBridge.h

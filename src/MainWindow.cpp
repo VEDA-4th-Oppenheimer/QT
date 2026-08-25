@@ -13,6 +13,7 @@
 #include "RtspSource.h"
 #include "EnrollDialog.h"
 #include "ScanFetcher.h"
+#include "ScanListDialog.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include "CameraConfig.h"
@@ -102,7 +103,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     });
     connect(m_scanFetcher, &ScanFetcher::listReady, this,
             [this](const QVector<ScanEntry> &e, const QString &note) {
-        if (m_topView != nullptr) m_topView->setScanList(e, note);
+        if (m_scanListDialog != nullptr) m_scanListDialog->setEntries(e, note);
     });
 
     // 모드/테마 메뉴에 있던 항목은 SETTINGS 탭으로 옮겼다(SettingsTab 참고).
@@ -352,15 +353,11 @@ void MainWindow::rebuildUi() {
     if (m_haveCloud) m_topView->setScanCloud(m_lastCloud);
     if (m_haveObjects) m_topView->setObjects(m_lastObjects);
 
-    // 3D 칸의 파일 목록 — 위젯이 새로 만들어졌으므로 매번 다시 잇는다.
-    connect(m_topView, &TopViewPanel::refreshRequested, this, [this] {
-        m_scanFetcher->refreshList();
-    });
-    connect(m_topView, &TopViewPanel::scanChosen, this,
-            [this](const QString &name, const QString &localPath) {
-        if (!localPath.isEmpty()) m_scanFetcher->loadLocal(localPath);
-        else                      m_scanFetcher->fetch(name);
-    });
+    // TOP-VIEW 패널의 데이터 열기 및 화면 전환 시그널 연결
+    connect(m_topView, &TopViewPanel::openScanFileRequested, this, &MainWindow::openScanFile);
+    connect(m_topView, &TopViewPanel::showScanListDialogRequested, this, &MainWindow::showScanListDialog);
+    connect(m_topView, &TopViewPanel::openCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
+    connect(m_topView, &TopViewPanel::fullScreenToggleRequested, this, &MainWindow::toggleTopViewFullScreen);
 }
 
 QWidget *MainWindow::buildDashboardTab() {
@@ -733,6 +730,27 @@ void MainWindow::openCalibrationResultFile() {
         QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
                              QString::fromUtf8("캘리브레이션 결과를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
     }
+}
+
+void MainWindow::showScanListDialog() {
+    if (m_scanListDialog == nullptr) {
+        m_scanListDialog = new ScanListDialog(this);
+        connect(m_scanListDialog, &ScanListDialog::refreshRequested, this, [this] {
+            m_scanFetcher->refreshList();
+        });
+        connect(m_scanListDialog, &ScanListDialog::scanChosen, this, [this](const QString &name, const QString &localPath) {
+            if (!localPath.isEmpty()) {
+                m_scanFetcher->loadLocal(localPath);
+            } else {
+                m_scanFetcher->fetch(name);
+            }
+        });
+        connect(m_scanListDialog, &ScanListDialog::openLocalFileRequested, this, &MainWindow::openScanFile);
+    }
+    m_scanFetcher->refreshList();
+    m_scanListDialog->show();
+    m_scanListDialog->raise();
+    m_scanListDialog->activateWindow();
 }
 
 void MainWindow::appendLog(const QString &tag, const QString &msg) {

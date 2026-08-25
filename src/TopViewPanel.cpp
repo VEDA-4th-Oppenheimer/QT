@@ -4,7 +4,8 @@
 #include <QStackedWidget>
 #include <QPushButton>
 #include <QButtonGroup>
-#include <QListWidget>
+#include <QMenu>
+#include <QAction>
 #include <QLocale>
 #include <QFileInfo>
 #include "Theme.h"
@@ -13,7 +14,6 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QFrame>
-#include <QLocale>
 #include <QMouseEvent>
 
 namespace {
@@ -43,160 +43,114 @@ QVBoxLayout *statCell(QWidget *parent, const QString &label, QLabel **value) {
 
 TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     setObjectName("panel");
-    // 폭은 대시보드 스플리터(사용자가 드래그로 조절)와 전체화면 창이 정한다.
-    // 하한만 잡아둔다 — 이보다 좁아지면 아래 범례 2행과 통계 4칸이 겹친다.
     setMinimumWidth(360);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // 헤더
+    // ── 상단 헤더 바
     auto *head = new QFrame(this);
     head->setObjectName("panelHead");
-    head->setFixedHeight(34);
+    head->setFixedHeight(36);
     auto *hl = new QHBoxLayout(head);
     hl->setContentsMargins(11, 0, 11, 0);
+    hl->setSpacing(6);
+
     auto *ht = new QLabel("TOP-VIEW", head);
     ht->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;letter-spacing:2px;").arg(Theme::Accent.name()));
     auto *hs = new QLabel(QString::fromUtf8("천장 중앙 기준"), head);
     hs->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextMuted.name()));
-    hl->addWidget(ht); hl->addSpacing(8); hl->addWidget(hs, 1); hl->addStretch(0);
+    hl->addWidget(ht);
+    hl->addSpacing(6);
+    hl->addWidget(hs);
+    hl->addStretch(1);
 
-    // 2D 조감 / 3D 점군 전환. 둘은 같은 데이터의 다른 단면이다 — 2D 는 카메라
-    // FOV·감지객체와 같이 보는 배치도이고, 3D 는 벽 높이를 확인하는 용도다.
-    // 바닥 투영만으로는 벽과 바닥이 같은 점으로 겹쳐서 구분이 안 된다.
-    // 전역 QPushButton 규칙은 min-height:30px / padding:0 13px 이라 34px 헤더에
-    // 그대로 넣으면 찌그러진다. 또 :checked 규칙이 전역에 없어서 어느 쪽이 켜져
-    // 있는지 표시가 안 난다 — 이 두 개만 따로 정의한다.
-    const QString segCss = QString(
+    const QString btnCss = QString(
         "QPushButton { background:%1; border:1px solid %2; border-radius:3px; color:%3;"
         " font-family:'JetBrains Mono','D2Coding',monospace; font-size:10px;"
-        " letter-spacing:1px; padding:0 9px; min-height:0px; min-width:0px; }"
-        "QPushButton:hover { color:%4; }"
-        "QPushButton:checked { background:%5; color:%6; border-color:%7; }")
-        .arg(Theme::PanelHead.name(), Theme::Border.name(), Theme::TextFaint.name())
-        .arg(Theme::Text2.name())
+        " letter-spacing:0.5px; padding:0 8px; min-height:22px; max-height:22px; }"
+        "QPushButton:hover { background:%4; color:%5; border-color:%5; }"
+        "QPushButton:checked { background:%6; color:%7; border-color:%8; font-weight:bold; }")
+        .arg(Theme::PanelHead.name(), Theme::Border.name(), Theme::Text2.name())
+        .arg(Theme::AccentBg.name(), Theme::AccentBright.name())
         .arg(Theme::AccentBg.name(), Theme::AccentBright.name(), Theme::Accent.name());
 
+    // 1. [📁 스캔 파일] 버튼 (로컬 파일 열기 / 서버 스캔 목록 선택 메뉴)
+    m_btnScan = new QPushButton(QString::fromUtf8("📁 스캔 파일 ▾"), head);
+    m_btnScan->setFixedHeight(22);
+    m_btnScan->setCursor(Qt::PointingHandCursor);
+    m_btnScan->setStyleSheet(btnCss);
+    m_btnScan->setToolTip(QString::fromUtf8("스캔 파일 (PCD 포인트클라우드) 불러오기"));
+
+    auto *scanMenu = new QMenu(m_btnScan);
+    scanMenu->setStyleSheet(QString(
+        "QMenu { background:%1; border:1px solid %2; padding:4px; }"
+        "QMenu::item { padding:6px 14px; font-family:'JetBrains Mono','D2Coding',monospace; font-size:11px; color:%3; border-radius:3px; }"
+        "QMenu::item:selected { background:%4; color:%5; }")
+        .arg(Theme::Panel.name(), Theme::Border.name(), Theme::Text2.name(), Theme::AccentBg.name(), Theme::AccentBright.name()));
+
+    auto *actOpenLocal = scanMenu->addAction(QString::fromUtf8("📁 로컬 PCD 파일 열기..."));
+    auto *actOpenServer = scanMenu->addAction(QString::fromUtf8("🌐 서버 스캔 목록 선택..."));
+    connect(actOpenLocal, &QAction::triggered, this, &TopViewPanel::openScanFileRequested);
+    connect(actOpenServer, &QAction::triggered, this, &TopViewPanel::showScanListDialogRequested);
+    m_btnScan->setMenu(scanMenu);
+    hl->addWidget(m_btnScan);
+
+    // 2. [📐 캘리브레이션 RT] 버튼 (result.json / calibration_result.json 불러오기)
+    m_btnCalib = new QPushButton(QString::fromUtf8("📐 캘리브레이션 RT"), head);
+    m_btnCalib->setFixedHeight(22);
+    m_btnCalib->setCursor(Qt::PointingHandCursor);
+    m_btnCalib->setStyleSheet(btnCss);
+    m_btnCalib->setToolTip(QString::fromUtf8("최신 캘리브레이션 결과 (result.json / calibration_result.json) 불러오기"));
+    connect(m_btnCalib, &QPushButton::clicked, this, &TopViewPanel::openCalibResultRequested);
+    hl->addWidget(m_btnCalib);
+
+    hl->addSpacing(4);
+    hl->addWidget(vDivider(head));
+    hl->addSpacing(4);
+
+    // 3. [2D] / [3D] 화면 전환 토글 버튼
     m_btn2d = new QPushButton("2D", head);
     m_btn3d = new QPushButton("3D", head);
-    QPushButton *btn2d = m_btn2d, *btn3d = m_btn3d;
     auto *viewGroup = new QButtonGroup(this);
-    viewGroup->setExclusive(true);   // 둘 중 하나만 켜지도록 Qt 가 관리한다
-    for (QPushButton *b : {btn2d, btn3d}) {
+    viewGroup->setExclusive(true);
+    for (QPushButton *b : {m_btn2d, m_btn3d}) {
         b->setCheckable(true);
-        b->setFixedHeight(20);
+        b->setFixedHeight(22);
         b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(segCss);
+        b->setStyleSheet(btnCss);
         viewGroup->addButton(b);
-        hl->addSpacing(5);
         hl->addWidget(b);
     }
-    btn2d->setChecked(true);
+    m_btn2d->setChecked(true);
 
-    // 전체화면(별도 창) 토글. 지도를 더블클릭해도 같은 동작이지만, 3D 캔버스는
-    // 더블클릭이 이미 시점 초기화라 거기서는 안 먹는다 — 그래서 버튼도 같이 둔다.
-    m_btnFull = new QPushButton(QString::fromUtf8("⛶ 전체화면"), head);
-    m_btnFull->setFixedHeight(20);
+    // 4. [⛶ 전체화면] 토글 버튼
+    m_btnFull = new QPushButton(QString::fromUtf8("⛶"), head);
+    m_btnFull->setFixedHeight(22);
+    m_btnFull->setFixedWidth(28);
     m_btnFull->setCursor(Qt::PointingHandCursor);
-    m_btnFull->setStyleSheet(segCss);
-    m_btnFull->setToolTip(QString::fromUtf8("별도 창에서 전체화면으로 본다 (지도 더블클릭도 같은 동작)"));
+    m_btnFull->setStyleSheet(btnCss);
+    m_btnFull->setToolTip(QString::fromUtf8("별도 창에서 전체화면으로 보기 (지도 더블클릭도 같은 동작)"));
     connect(m_btnFull, &QPushButton::clicked, this, &TopViewPanel::fullScreenToggleRequested);
-    hl->addSpacing(5);
     hl->addWidget(m_btnFull);
 
-    // 캔버스 — 2D 지도와 3D 뷰를 같은 자리에 겹쳐 두고 헤더 버튼으로 바꾼다.
+    // ── 메인 캔버스 스택: 0 = 2D TopViewWidget, 1 = 3D ScanView3D
     m_map = new TopViewWidget(this);
     m_map->setRoomSize(10.0, 10.0);
     m_view3d = new ScanView3D(this);
-    // ── 3D 칸은 두 화면이다: 파일 목록 → 선택하면 뷰어, 뷰어에서 뒤로가면 목록.
-    auto *listPage = new QWidget(this);
-    auto *lpv = new QVBoxLayout(listPage);
-    lpv->setContentsMargins(10, 10, 10, 8);
-    lpv->setSpacing(7);
-    auto *lpHead = new QHBoxLayout;
-    auto *lpTitle = new QLabel(QString::fromUtf8("스캔 파일"), listPage);
-    lpTitle->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
-    auto *btnRefresh = new QPushButton(QString::fromUtf8("새로고침"), listPage);
-    btnRefresh->setFixedHeight(20);
-    btnRefresh->setCursor(Qt::PointingHandCursor);
-    btnRefresh->setStyleSheet(segCss);
-    lpHead->addWidget(lpTitle);
-    lpHead->addStretch(1);
-    lpHead->addWidget(btnRefresh);
-    lpv->addLayout(lpHead);
-
-    m_listNote = new QLabel(QString::fromUtf8("목록을 불러오는 중…"), listPage);
-    m_listNote->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextFaint.name()));
-    lpv->addWidget(m_listNote);
-
-    m_list = new QListWidget(listPage);
-    m_list->setStyleSheet(QString(
-        "QListWidget { background:%1; border:1px solid %2; border-radius:4px;"
-        " font-family:'JetBrains Mono','D2Coding',monospace; font-size:10px; color:%3; }"
-        "QListWidget::item { padding:6px 8px; border-bottom:1px solid %4; }"
-        "QListWidget::item:selected { background:%5; color:%6; }"
-        "QListWidget::item:hover { background:%4; }")
-        .arg(Theme::MapBg.name(), Theme::Border.name(), Theme::Text3.name())
-        .arg(Theme::BorderRow.name())
-        .arg(Theme::AccentBg.name(), Theme::AccentBright.name()));
-    lpv->addWidget(m_list, 1);
-
-    auto *viewPage = new QWidget(this);
-    auto *vpv = new QVBoxLayout(viewPage);
-    vpv->setContentsMargins(0, 0, 0, 0);
-    vpv->setSpacing(0);
-    auto *backBar = new QFrame(viewPage);
-    backBar->setFixedHeight(28);
-    backBar->setStyleSheet(QString("background:%1;border:none;border-bottom:1px solid %2;")
-        .arg(Theme::BarBg.name(), Theme::BorderSoft.name()));
-    auto *bbl = new QHBoxLayout(backBar);
-    bbl->setContentsMargins(8, 0, 8, 0);
-    auto *btnBack = new QPushButton(QString::fromUtf8("← 목록"), backBar);
-    btnBack->setFixedHeight(20);
-    btnBack->setCursor(Qt::PointingHandCursor);
-    btnBack->setStyleSheet(segCss);
-    m_viewTitle = new QLabel(backBar);
-    m_viewTitle->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextMuted.name()));
-    bbl->addWidget(btnBack);
-    bbl->addSpacing(8);
-    bbl->addWidget(m_viewTitle, 1);
-    vpv->addWidget(backBar);
-    vpv->addWidget(m_view3d, 1);
 
     m_stack = new QStackedWidget(this);
-    m_stack->addWidget(m_map);        // 0
-    m_stack->addWidget(listPage);     // 1
-    m_stack->addWidget(viewPage);     // 2
+    m_stack->addWidget(m_map);      // 0: 2D 맵
+    m_stack->addWidget(m_view3d);   // 1: 3D 뷰어
 
-    connect(btnRefresh, &QPushButton::clicked, this, [this] {
-        m_listNote->setText(QString::fromUtf8("목록을 불러오는 중…"));
-        emit refreshRequested();
-    });
-    connect(btnBack, &QPushButton::clicked, this, [this] { showScanList(); });
-    connect(m_list, &QListWidget::itemActivated, this, [this](QListWidgetItem *it) {
-        if (it == nullptr) return;
-        emit scanChosen(it->data(Qt::UserRole).toString(), it->data(Qt::UserRole + 1).toString());
-    });
-    // 한 번 클릭으로 열리게 한다 — 목록이 짧고 파괴적 동작이 아니다.
-    connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem *it) {
-        if (it == nullptr) return;
-        emit scanChosen(it->data(Qt::UserRole).toString(), it->data(Qt::UserRole + 1).toString());
-    });
+    connect(m_btn2d, &QPushButton::clicked, this, [this] { m_stack->setCurrentIndex(0); });
+    connect(m_btn3d, &QPushButton::clicked, this, [this] { m_stack->setCurrentIndex(1); });
 
-    connect(btn2d, &QPushButton::clicked, this, [this] { m_stack->setCurrentIndex(0); });
-    connect(btn3d, &QPushButton::clicked, this, [this] {
-        // 이미 띄워둔 점군이 있으면 바로 뷰어로, 없으면 목록부터.
-        if (m_view3d->hasCloud()) m_stack->setCurrentIndex(2);
-        else showScanList();
-    });
-
-    // 범례 바
+    // ── 범례 바
     auto *legend = new QFrame(this);
     legend->setStyleSheet(QString("background:%1;border:none;border-top:1px solid %2;")
         .arg(Theme::BarBg.name(), Theme::BorderSoft.name()));
-    // 기본 폭(430px) 한 줄에 스와치 4종 + 점군 요약까지 넣으면 잘린다. 2행으로 나눈다.
     auto *legendV = new QVBoxLayout(legend);
     legendV->setContentsMargins(11, 7, 11, 7);
     legendV->setSpacing(5);
@@ -214,11 +168,8 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     ll->addWidget(wallSwatch);
     auto *lw = new QLabel("WALL", legend); mono10(lw); ll->addWidget(lw);
 
-    // FOV 항목은 뺐다 — 지도에서 채널별 사분면을 걷어냈다(TopViewWidget 주석 참고).
-
     auto *cloudSwatch = new QLabel(legend);
     cloudSwatch->setFixedSize(14, 10);
-    // 높이 램프의 양 끝(낮음→높음)을 그대로 보여준다 — TopViewWidget::cloudRamp 와 같은 색.
     cloudSwatch->setStyleSheet(Theme::CurrentMode == Theme::Mode::Developer
         ? QStringLiteral("background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                          "stop:0 #1a3b73, stop:0.5 #57c8b8, stop:1 #fff0c2);")
@@ -232,7 +183,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     mono10(m_coverage);
     ll->addWidget(m_coverage);
 
-    // 2행: 점군 요약(점 수·미반사·반경) — 길어서 한 줄을 통째로 쓴다.
+    // 2행: 점군 요약 (점 수, 미반사, 반경)
     m_cloudInfo = new QLabel(legend);
     mono10(m_cloudInfo);
     legendV->addWidget(m_cloudInfo);
@@ -241,12 +192,9 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     mono10(m_objectInfo);
     legendV->addWidget(m_objectInfo);
 
-    // 하단 통계 바
+    // ── 하단 통계 바
     auto *stats = new QFrame(this);
     stats->setStyleSheet(QString("background:%1;border:none;").arg(Theme::BarBg.name()));
-    // 세로가 모자라면 지도가 줄어야지 이 줄이 사라지면 안 된다. 압축 대상에서
-    // 빼둔다 — ROLL/PITCH 는 스캔 전에 킷 수평을 맞추는 데 쓰는 값이라, 안 보이면
-    // 조작 자체가 안 된다(윈도우 고배율에서 실제로 잘려나갔다).
     stats->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto *sv = new QVBoxLayout(stats);
     sv->setContentsMargins(11, 8, 11, 10);
@@ -277,11 +225,6 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     root->addWidget(legend);
     root->addWidget(stats);
 
-    // 더블클릭 = 전체화면 토글. 자식 위젯이 눌린 자리에서도 먹어야 하므로 칸별로
-    // 필터를 건다(라벨은 마우스 이벤트를 안 먹고 부모로 넘기므로 헤더/범례/통계는
-    // 프레임 하나씩이면 충분하다). 뺀 곳:
-    //   - ScanView3D  : 더블클릭이 시점 초기화 (헤더 버튼으로 대신 연다)
-    //   - 스캔 파일 목록 : 클릭 한 번이 곧 열기라 더블클릭이 겹친다
     for (QWidget *w : {static_cast<QWidget *>(this), static_cast<QWidget *>(head),
                        static_cast<QWidget *>(m_map), static_cast<QWidget *>(legend),
                        static_cast<QWidget *>(stats)}) {
@@ -304,8 +247,8 @@ bool TopViewPanel::eventFilter(QObject *watched, QEvent *ev) {
 }
 
 void TopViewPanel::setDetached(bool detached) {
-    m_btnFull->setText(detached ? QString::fromUtf8("⛶ 창 닫기")
-                                : QString::fromUtf8("⛶ 전체화면"));
+    m_btnFull->setText(detached ? QString::fromUtf8("⛶ 복원")
+                                : QString::fromUtf8("⛶"));
     m_btnFull->setToolTip(detached
         ? QString::fromUtf8("대시보드로 되돌린다 (Esc · 지도 더블클릭도 같은 동작)")
         : QString::fromUtf8("별도 창에서 전체화면으로 본다 (지도 더블클릭도 같은 동작)"));
@@ -338,9 +281,6 @@ void TopViewPanel::setObjects(const QVector<SpatialObject> &o) {
 void TopViewPanel::setScanCloud(const ScanCloud &c) {
     m_map->setScanCloud(c);
     m_view3d->setScanCloud(c);
-    m_viewTitle->setText(QFileInfo(c.sourcePath).fileName());
-    // 목록에서 고른 직후라면 뷰어를 보여준다. 2D 를 보고 있었다면 방해하지 않는다.
-    if (m_stack->currentIndex() == 1) m_stack->setCurrentIndex(2);
     setCloudStatus(QString::fromUtf8("CLOUD %1 pts · 미반사 %2 · 반경 %3 m")
                        .arg(QLocale(QLocale::English).toString(c.count()))
                        .arg(c.invalid)
@@ -371,36 +311,21 @@ void TopViewPanel::setImu(const ImuState &imu) {
 }
 
 void TopViewPanel::setDaemonState(const DaemonState &s) {
-    const QString color =
-        (s.state == "IDLE")     ? Theme::Ok.name() :
-        (s.state == "SCANNING") ? Theme::AccentBright.name() :
-        (s.state == "DISARM")   ? Theme::DangerText.name() : Theme::TextDim2.name();
-    m_scanSummary->setText(QString("%1  ·  link %2  ·  homed %3  ·  %4")
-                                .arg(s.state)
-                                .arg(s.linkAlive ? "OK" : "DOWN")
-                                .arg(s.homed ? "Y" : "N")
-                                .arg(s.ts.isValid() ? s.ts.toString("HH:mm:ss") : QString("--:--:--")));
-    m_scanSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(color));
+    m_scanSummary->setText(QStringLiteral("%1 · %2 · homed %3 · %4")
+                               .arg(s.state,
+                                    s.linkAlive ? "link UP" : "link DOWN",
+                                    s.homed ? "Y" : "N",
+                                    s.ts.isValid() ? s.ts.toString("HH:mm:ss") : "--:--:--"));
 }
 
 void TopViewPanel::setScanProgress(const ScanProgress &p) {
-    m_coverage->setText(QString("SCAN PROGRESS %1%").arg(p.percent));
-    m_scanPts->setText(QLocale().toString(p.points));
-    m_expected->setText(QLocale().toString(p.expected));
+    m_scanPts->setText(QString::number(p.points));
+    m_expected->setText(QString::number(p.expected));
 }
 
 void TopViewPanel::setScanResult(const ScanResult &r) {
-    // state/scan(develop 브랜치 실구현)은 expected 를 안 보낸다 — event/progress
-    // 에서 마지막으로 받은 값을 그대로 둔다(덮어써서 0으로 리셋하지 않는다).
-    m_coverage->setText(QStringLiteral("SCAN PROGRESS 100%"));
-    m_scanPts->setText(QLocale().toString(r.points));
-}
-
-void TopViewPanel::showScanList() {
-    m_btn3d->setChecked(true);
-    m_stack->setCurrentIndex(1);
-    m_listNote->setText(QString::fromUtf8("목록을 불러오는 중…"));
-    emit refreshRequested();
+    m_scanPts->setText(QString::number(r.points));
+    m_expected->setText(QString::number(r.expected));
 }
 
 void TopViewPanel::showMap2D() {
@@ -410,29 +335,5 @@ void TopViewPanel::showMap2D() {
 
 void TopViewPanel::showCloud3D() {
     m_btn3d->setChecked(true);
-    m_stack->setCurrentIndex(m_view3d->hasCloud() ? 2 : 1);
-}
-
-void TopViewPanel::setScanList(const QVector<ScanEntry> &entries, const QString &note) {
-    m_list->clear();
-    const QLocale loc(QLocale::English);
-    for (const ScanEntry &e : entries) {
-        // 파일명은 calib-YYYYMMDD-HHMMSS_sweep-NNNNNN.pcd 라 그대로 두면 길다.
-        // 뒤에 크기와 출처를 붙여 한 줄에 판단할 수 있게 한다.
-        const QString size = e.size > 0 ? QStringLiteral("%1 KB").arg(e.size / 1024) : QStringLiteral("—");
-        const QString when = e.mtime.isValid() ? e.mtime.toString("MM-dd HH:mm") : QStringLiteral("");
-        auto *it = new QListWidgetItem(QStringLiteral("%1\n%2 · %3 · %4")
-                                           .arg(e.name, size, when,
-                                                e.isLocal() ? QString::fromUtf8("로컬")
-                                                            : QString::fromUtf8("서버")));
-        it->setData(Qt::UserRole, e.name);
-        it->setData(Qt::UserRole + 1, e.localPath);
-        m_list->addItem(it);
-    }
-    if (entries.isEmpty()) {
-        m_listNote->setText(QString::fromUtf8("스캔 파일이 없다 — %1").arg(note));
-    } else {
-        m_listNote->setText(note);
-    }
-    Q_UNUSED(loc);
+    m_stack->setCurrentIndex(1);
 }
