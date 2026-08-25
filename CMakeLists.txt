@@ -37,6 +37,7 @@ set(SOURCES
     src/EnrollDialog.cpp
     src/DemoBridge.cpp
     src/ScanListDialog.cpp
+    src/CameraCalibDialog.cpp
     src/RtspDecoder.cpp
     src/RtspSource.cpp
 )
@@ -62,6 +63,7 @@ set(HEADERS
     src/ScanCloud.h
     src/ScanFetcher.h
     src/ScanListDialog.h
+    src/CameraCalibDialog.h
     src/ScanView3D.h
     src/EnrollDialog.h
     src/DemoBridge.h

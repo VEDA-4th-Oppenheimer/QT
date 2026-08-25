@@ -14,6 +14,7 @@
 #include "EnrollDialog.h"
 #include "ScanFetcher.h"
 #include "ScanListDialog.h"
+#include "CameraCalibDialog.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QPushButton>
@@ -46,6 +47,7 @@
 #include <QUrl>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
@@ -362,7 +364,7 @@ void MainWindow::rebuildUi() {
     connect(m_topView, &TopViewPanel::openScanFileRequested, this, &MainWindow::openScanFile);
     connect(m_topView, &TopViewPanel::showScanListDialogRequested, this, &MainWindow::showScanListDialog);
     connect(m_topView, &TopViewPanel::openCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
-    connect(m_topView, &TopViewPanel::fetchCalibResultFromCameraRequested, this, &MainWindow::fetchCalibrationResultFromCamera);
+    connect(m_topView, &TopViewPanel::fetchCalibResultFromCameraRequested, this, &MainWindow::showCameraCalibDialog);
     connect(m_topView, &TopViewPanel::fullScreenToggleRequested, this, &MainWindow::toggleTopViewFullScreen);
 }
 
@@ -870,6 +872,111 @@ void MainWindow::showScanListDialog() {
     m_scanListDialog->show();
     m_scanListDialog->raise();
     m_scanListDialog->activateWindow();
+}
+
+void MainWindow::showCameraCalibDialog() {
+    QString host = QStringLiteral("172.20.32.43");
+    QString user = QStringLiteral("admin");
+    QString password;
+
+    QFile f(resolveConfigPath(QStringLiteral("config/cameras.json")));
+    if (f.open(QIODevice::ReadOnly)) {
+        const auto ch = QJsonDocument::fromJson(f.readAll()).object()
+                            .value(QStringLiteral("channels")).toObject();
+        if (!ch.isEmpty()) {
+            const QUrl u(ch.begin().value().toString());
+            if (!u.host().isEmpty()) host = u.host();
+            if (!u.userName().isEmpty()) user = u.userName();
+            if (!u.password().isEmpty()) password = u.password();
+        }
+    }
+
+    if (m_cameraCalibDialog == nullptr) {
+        m_cameraCalibDialog = new CameraCalibDialog(this);
+        connect(m_cameraCalibDialog, &CameraCalibDialog::openLocalFileRequested, this, &MainWindow::openCalibrationResultFile);
+        connect(m_cameraCalibDialog, &CameraCalibDialog::refreshRequested, this, [this] {
+            showCameraCalibDialog();
+        });
+        connect(m_cameraCalibDialog, &CameraCalibDialog::sessionChosen, this, [this](const QString &sessionId, const QString &fileName) {
+            appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 세션 선택: %1 (%2)").arg(sessionId, fileName));
+            fetchCalibrationResultFromCamera();
+        });
+    }
+
+    m_cameraCalibDialog->setCameraInfo(host, QString::fromUtf8("조회 중…"), QString());
+
+    auto *mgr = new QNetworkAccessManager(this);
+    connect(mgr, &QNetworkAccessManager::authenticationRequired, this,
+            [user, password](QNetworkReply *, QAuthenticator *auth) {
+        auth->setUser(user);
+        auth->setPassword(password);
+    });
+
+    const QUrl filesUrl(QStringLiteral("http://%1/opensdk/calibration/files").arg(host));
+    const QUrl statusUrl(QStringLiteral("http://%1/opensdk/calibration/status").arg(host));
+
+    QNetworkRequest reqFiles(filesUrl);
+    reqFiles.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (!user.isEmpty() && !password.isEmpty()) {
+        const QString credentials = QStringLiteral("%1:%2").arg(user, password);
+        reqFiles.setRawHeader("Authorization", "Basic " + credentials.toUtf8().toBase64());
+    }
+
+    QNetworkReply *replyFiles = mgr->get(reqFiles);
+    connect(replyFiles, &QNetworkReply::finished, this, [this, replyFiles, mgr, host, user, password, statusUrl] {
+        replyFiles->deleteLater();
+
+        QVector<CameraCalibEntry> entries;
+        if (replyFiles->error() == QNetworkReply::NoError) {
+            const QByteArray data = replyFiles->readAll();
+            const QJsonDocument doc = QJsonDocument::fromJson(data);
+            if (doc.isObject()) {
+                const QJsonArray filesArray = doc.object().value(QStringLiteral("files")).toArray();
+                for (const auto &item : filesArray) {
+                    const QJsonObject fo = item.toObject();
+                    CameraCalibEntry entry;
+                    entry.fileName = fo.value(QStringLiteral("name")).toString();
+                    entry.bytes = static_cast<qint64>(fo.value(QStringLiteral("bytes")).toDouble());
+                    entry.processed = fo.value(QStringLiteral("processed")).toBool();
+                    entry.queued = fo.value(QStringLiteral("queued")).toBool();
+                    if (entry.fileName.size() >= 21 && entry.fileName.startsWith(QStringLiteral("calib-"))) {
+                        entry.sessionId = entry.fileName.left(21);
+                    }
+                    entries.append(entry);
+                }
+            }
+        }
+
+        QNetworkRequest reqStatus(statusUrl);
+        reqStatus.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        if (!user.isEmpty() && !password.isEmpty()) {
+            const QString credentials = QStringLiteral("%1:%2").arg(user, password);
+            reqStatus.setRawHeader("Authorization", "Basic " + credentials.toUtf8().toBase64());
+        }
+
+        QNetworkReply *replyStatus = mgr->get(reqStatus);
+        connect(replyStatus, &QNetworkReply::finished, this, [this, replyStatus, mgr, host, entries] {
+            replyStatus->deleteLater();
+            mgr->deleteLater();
+
+            QString status = QStringLiteral("연결 성공");
+            QString currentSession;
+            if (replyStatus->error() == QNetworkReply::NoError) {
+                const QJsonObject so = QJsonDocument::fromJson(replyStatus->readAll()).object();
+                status = so.value(QStringLiteral("status")).toString();
+                currentSession = so.value(QStringLiteral("session_id")).toString();
+            }
+
+            if (m_cameraCalibDialog != nullptr) {
+                m_cameraCalibDialog->setCameraInfo(host, status, currentSession);
+                m_cameraCalibDialog->setEntries(entries);
+            }
+        });
+    });
+
+    m_cameraCalibDialog->show();
+    m_cameraCalibDialog->raise();
+    m_cameraCalibDialog->activateWindow();
 }
 
 void MainWindow::appendLog(const QString &tag, const QString &msg) {

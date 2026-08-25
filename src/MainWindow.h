@@ -19,6 +19,7 @@ class DemoBridge;
 class RtspSource;
 class ScanFetcher;
 class ScanListDialog;
+class CameraCalibDialog;
 class QTabWidget;
 class QSplitter;
 class QLabel;
@@ -62,6 +63,7 @@ private:
     void openScanFile();
     void openCalibrationResultFile();
     void fetchCalibrationResultFromCamera();
+    void showCameraCalibDialog();
     void showScanListDialog();
 
     TopBar         *m_topBar    = nullptr;
@@ -73,6 +75,7 @@ private:
     EventLogTab    *m_eventsTab = nullptr;
     SettingsTab    *m_settingsTab = nullptr;
     ScanListDialog *m_scanListDialog = nullptr;
+    CameraCalibDialog *m_cameraCalibDialog = nullptr;
     CameraTile     *m_tiles[4]  = {nullptr, nullptr, nullptr, nullptr};
 
     // 대시보드 좌(CCTV 4채널)/우(TOP-VIEW) 분할. 사용자가 핸들을 끌어 비율을
