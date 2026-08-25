@@ -35,7 +35,10 @@
 #include <QActionGroup>
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QDir>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QMessageBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -48,6 +51,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonParseError>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
@@ -740,8 +744,9 @@ void MainWindow::openCalibrationResultFile() {
     }
 }
 
-void MainWindow::fetchCalibrationResultFromCamera() {
-    // RTSP 에 설정된 카메라 IP, 계정(ID), 비밀번호(PW)를 그대로 사용
+void MainWindow::downloadCalibrationResult(const QString &sessionId,
+                                           const QString &downloadUrl,
+                                           const QString &downloadFileName) {
     QString host = QStringLiteral("172.20.32.43");
     QString user = QStringLiteral("admin");
     QString password;
@@ -758,98 +763,105 @@ void MainWindow::fetchCalibrationResultFromCamera() {
         }
     }
 
-    appendLog("CALIB", QString::fromUtf8("CCTV 카메라 (%1, 계정: %2) OpenSDK 캘리브레이션 조회 시작...").arg(host, user));
+    QString safeFileName = QFileInfo(downloadFileName).fileName();
+    if (safeFileName.isEmpty()) {
+        QString safeSessionId = sessionId;
+        safeSessionId.replace('/', '_');
+        safeSessionId.replace('\\', '_');
+        if (safeSessionId.isEmpty()) safeSessionId = QStringLiteral("calibration");
+        safeFileName = safeSessionId + QStringLiteral("_calibration_result.json");
+    }
+
+    QString downloadDirectory = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (downloadDirectory.isEmpty()) downloadDirectory = QDir::homePath();
+    const QString savePath = QFileDialog::getSaveFileName(
+        this,
+        QString::fromUtf8("캘리브레이션 결과 저장"),
+        QDir(downloadDirectory).filePath(safeFileName),
+        QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
+    if (savePath.isEmpty()) return;
+
+    const QString apiBase = QStringLiteral("https://%1/opensdk/calibration").arg(host);
+    const QString relativePath = downloadUrl.trimmed();
+    QUrl resultUrl;
+    const QUrl suppliedUrl(relativePath);
+    if (!suppliedUrl.isRelative()) {
+        resultUrl = suppliedUrl;
+    } else if (relativePath.startsWith(QStringLiteral("/opensdk/"))) {
+        resultUrl = QUrl(QStringLiteral("https://%1%2").arg(host, relativePath));
+    } else {
+        const QString separator = relativePath.startsWith('/') ? QString() : QStringLiteral("/");
+        resultUrl = QUrl(apiBase + separator + relativePath);
+    }
+
+    if (!resultUrl.isValid() || resultUrl.scheme() != QStringLiteral("https") ||
+        resultUrl.host().compare(host, Qt::CaseInsensitive) != 0) {
+        const QString error = QString::fromUtf8("서버가 잘못된 결과 다운로드 주소를 반환했습니다: %1")
+                                  .arg(downloadUrl);
+        appendLog("CALIB", error);
+        QMessageBox::warning(this, QString::fromUtf8("다운로드 주소 오류"), error);
+        return;
+    }
+
+    appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 다운로드 시작: %1 (%2)")
+                           .arg(sessionId, resultUrl.toString()));
 
     auto *mgr = new QNetworkAccessManager(this);
-
-    // HTTP 401 Digest / Basic Authentication 자동 인증 핸들러 등록
     connect(mgr, &QNetworkAccessManager::authenticationRequired, this,
-            [user, password](QNetworkReply * /*reply*/, QAuthenticator *auth) {
+            [user, password](QNetworkReply *, QAuthenticator *auth) {
         auth->setUser(user);
         auth->setPassword(password);
     });
 
-    const QUrl statusUrl(QStringLiteral("http://%1/opensdk/calibration/status").arg(host));
-    QNetworkRequest req(statusUrl);
+    QNetworkRequest req(resultUrl);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-    // 선제적 Basic Authorization 헤더 추가
     if (!user.isEmpty() && !password.isEmpty()) {
         const QString credentials = QStringLiteral("%1:%2").arg(user, password);
-        const QByteArray authData = "Basic " + credentials.toUtf8().toBase64();
-        req.setRawHeader("Authorization", authData);
+        req.setRawHeader("Authorization", "Basic " + credentials.toUtf8().toBase64());
     }
 
     QNetworkReply *reply = mgr->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, mgr, host, user, password] {
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, mgr, sessionId, savePath] {
+        const QByteArray responseData = reply->readAll();
         reply->deleteLater();
         mgr->deleteLater();
 
         if (reply->error() != QNetworkReply::NoError) {
-            const QString err = QString::fromUtf8("카메라 (%1) OpenSDK 연결 실패: %2")
-                                    .arg(host, reply->errorString());
-            appendLog("CALIB", err);
-            QMessageBox::warning(this, QString::fromUtf8("카메라 연결 실패"),
-                                 QString::fromUtf8("카메라 OpenSDK API에 연결하지 못했습니다.\n\nURL: http://%1/opensdk/calibration/status\n계정: %2\n오류: %3\n\n카메라 IP, 계정/비밀번호 및 OpenSDK 실행 여부를 확인해 주세요.")
-                                     .arg(host, user, reply->errorString()));
+            const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QString error = QString::fromUtf8("캘리브레이션 결과 다운로드 실패: HTTP %1, %2")
+                                      .arg(httpStatus)
+                                      .arg(reply->errorString());
+            appendLog("CALIB", error);
+            QMessageBox::warning(this, QString::fromUtf8("다운로드 실패"), error);
             return;
         }
 
-        const QByteArray responseData = reply->readAll();
-        const QJsonDocument doc = QJsonDocument::fromJson(responseData);
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(responseData, &parseError);
         if (!doc.isObject()) {
-            appendLog("CALIB", QString::fromUtf8("카메라 응답 JSON 파싱 실패"));
-            QMessageBox::warning(this, QString::fromUtf8("응답 형식 오류"),
-                                 QString::fromUtf8("카메라로부터 올바른 JSON 응답을 받지 못했습니다."));
+            const QString error = QString::fromUtf8("다운로드 응답이 올바른 JSON이 아닙니다: %1")
+                                      .arg(parseError.errorString());
+            appendLog("CALIB", error);
+            QMessageBox::warning(this, QString::fromUtf8("응답 형식 오류"), error);
             return;
         }
 
-        const QJsonObject obj = doc.object();
-        const QString status = obj.value(QStringLiteral("status")).toString();
-        const QString sessionId = obj.value(QStringLiteral("session_id")).toString();
-        const QString lastFile = obj.value(QStringLiteral("last_file_name")).toString();
-        const int completedJobs = obj.value(QStringLiteral("completed_jobs")).toInt();
-
-        appendLog("CALIB", QString::fromUtf8("카메라 캘리브레이션 상태: %1 (세션: %2, 완료: %3건)")
-                                .arg(status, sessionId).arg(completedJobs));
-
-        // 캘리브레이션 결과 적용 시도
-        QString summary;
-        bool applied = SpatialProjector::instance().loadCalibrationResultData(responseData, 1, &summary);
-
-        if (applied) {
-            appendLog("CALIB", QString::fromUtf8("카메라 OpenSDK 최신 RT 적용 완료: %1").arg(summary));
-            QMessageBox::information(this, QString::fromUtf8("CCTV 캘리브레이션 RT 적용 완료"),
-                                     QString::fromUtf8("카메라 (%1)로부터 최신 캘리브레이션 결과를 성공적으로 적용했습니다.\n\n%2")
-                                         .arg(host, summary));
-            if (m_topView) m_topView->update();
-        } else {
-            QString infoMsg = QString::fromUtf8("카메라 OpenSDK 상태:\n- 상태: %1\n- 세션 ID: %2\n- 최근 파일: %3\n- 완료 작업: %4건\n\n")
-                                  .arg(status.isEmpty() ? QStringLiteral("-") : status,
-                                       sessionId.isEmpty() ? QStringLiteral("-") : sessionId,
-                                       lastFile.isEmpty() ? QStringLiteral("-") : lastFile)
-                                  .arg(completedJobs);
-
-            if (status == QStringLiteral("candidate_ready") || completedJobs > 0) {
-                infoMsg += QString::fromUtf8("카메라에서 자동 캘리브레이션 연산이 성공적으로 완료되었습니다 (candidate_ready)!\n\n웹에서 다운로드한 'result.json' 또는 'calibration_result.json' 파일을 선택해 주시면 2D/3D Top-View에 즉시 적용됩니다.");
-                QMessageBox msgBox(this);
-                msgBox.setWindowTitle(QString::fromUtf8("카메라 캘리브레이션 완료"));
-                msgBox.setText(infoMsg);
-                msgBox.setIcon(QMessageBox::Information);
-                QAbstractButton *btnSelect = msgBox.addButton(QString::fromUtf8("📁 파일 선택하여 즉시 적용"), QMessageBox::ActionRole);
-                msgBox.addButton(QString::fromUtf8("닫기"), QMessageBox::RejectRole);
-                msgBox.exec();
-                if (msgBox.clickedButton() == btnSelect) {
-                    openCalibrationResultFile();
-                }
-            } else if (status == QStringLiteral("calibration_running")) {
-                infoMsg += QString::fromUtf8("현재 카메라에서 캘리브레이션 연산이 진행 중입니다. 잠시 후 다시 시도해 주세요.");
-                QMessageBox::information(this, QString::fromUtf8("카메라 캘리브레이션 진행 중"), infoMsg);
-            } else {
-                infoMsg += QString::fromUtf8("카메라 웹(http://%1/home/setup/opensdk/html/calibration/index.html?AppName=calibration)에서 스캔 파일을 선택하고 [시작]을 눌러 캘리브레이션을 진행해 주세요.").arg(host);
-                QMessageBox::information(this, QString::fromUtf8("카메라 캘리브레이션 대기 중"), infoMsg);
-            }
+        QSaveFile output(savePath);
+        if (!output.open(QIODevice::WriteOnly) || output.write(responseData) != responseData.size() ||
+            !output.commit()) {
+            const QString error = QString::fromUtf8("다운로드 파일 저장 실패: %1").arg(savePath);
+            appendLog("CALIB", error);
+            QMessageBox::warning(this, QString::fromUtf8("파일 저장 실패"), error);
+            return;
         }
+
+        appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 다운로드 완료: %1 -> %2")
+                               .arg(sessionId, savePath));
+        QMessageBox::information(this,
+                                 QString::fromUtf8("다운로드 완료"),
+                                 QString::fromUtf8("캘리브레이션 결과를 저장했습니다.\n\n%1")
+                                     .arg(savePath));
     });
 }
 
@@ -897,10 +909,8 @@ void MainWindow::showCameraCalibDialog() {
         connect(m_cameraCalibDialog, &CameraCalibDialog::refreshRequested, this, [this] {
             showCameraCalibDialog();
         });
-        connect(m_cameraCalibDialog, &CameraCalibDialog::sessionChosen, this, [this](const QString &sessionId, const QString &fileName) {
-            appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 세션 선택: %1 (%2)").arg(sessionId, fileName));
-            fetchCalibrationResultFromCamera();
-        });
+        connect(m_cameraCalibDialog, &CameraCalibDialog::downloadRequested,
+                this, &MainWindow::downloadCalibrationResult);
     }
 
     m_cameraCalibDialog->setCameraInfo(host, QString::fromUtf8("조회 중…"), QString());
@@ -912,66 +922,83 @@ void MainWindow::showCameraCalibDialog() {
         auth->setPassword(password);
     });
 
-    const QUrl filesUrl(QStringLiteral("http://%1/opensdk/calibration/files").arg(host));
-    const QUrl statusUrl(QStringLiteral("http://%1/opensdk/calibration/status").arg(host));
+    const QUrl resultsUrl(QStringLiteral("https://%1/opensdk/calibration/results").arg(host));
 
-    QNetworkRequest reqFiles(filesUrl);
-    reqFiles.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkRequest request(resultsUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     if (!user.isEmpty() && !password.isEmpty()) {
         const QString credentials = QStringLiteral("%1:%2").arg(user, password);
-        reqFiles.setRawHeader("Authorization", "Basic " + credentials.toUtf8().toBase64());
+        request.setRawHeader("Authorization", "Basic " + credentials.toUtf8().toBase64());
     }
 
-    QNetworkReply *replyFiles = mgr->get(reqFiles);
-    connect(replyFiles, &QNetworkReply::finished, this, [this, replyFiles, mgr, host, user, password, statusUrl] {
-        replyFiles->deleteLater();
+    appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 목록 조회: %1")
+                           .arg(resultsUrl.toString()));
+    QNetworkReply *reply = mgr->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, mgr, host] {
+        const QByteArray responseData = reply->readAll();
+        reply->deleteLater();
+        mgr->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QString error = QString::fromUtf8("결과 목록 조회 실패: HTTP %1, %2")
+                                      .arg(httpStatus)
+                                      .arg(reply->errorString());
+            appendLog("CALIB", error);
+            if (m_cameraCalibDialog != nullptr) {
+                m_cameraCalibDialog->setCameraInfo(host, QString::fromUtf8("연결 실패"), QString());
+                m_cameraCalibDialog->setEntries({});
+                m_cameraCalibDialog->setErrorMessage(error);
+            }
+            return;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(responseData, &parseError);
+        if (!document.isObject() || !document.object().value(QStringLiteral("results")).isArray()) {
+            const QString error = QString::fromUtf8("결과 목록 응답 형식 오류: %1")
+                                      .arg(parseError.error == QJsonParseError::NoError
+                                               ? QString::fromUtf8("results 배열이 없습니다.")
+                                               : parseError.errorString());
+            appendLog("CALIB", error);
+            if (m_cameraCalibDialog != nullptr) {
+                m_cameraCalibDialog->setCameraInfo(host, QString::fromUtf8("응답 오류"), QString());
+                m_cameraCalibDialog->setEntries({});
+                m_cameraCalibDialog->setErrorMessage(error);
+            }
+            return;
+        }
 
         QVector<CameraCalibEntry> entries;
-        if (replyFiles->error() == QNetworkReply::NoError) {
-            const QByteArray data = replyFiles->readAll();
-            const QJsonDocument doc = QJsonDocument::fromJson(data);
-            if (doc.isObject()) {
-                const QJsonArray filesArray = doc.object().value(QStringLiteral("files")).toArray();
-                for (const auto &item : filesArray) {
-                    const QJsonObject fo = item.toObject();
-                    CameraCalibEntry entry;
-                    entry.fileName = fo.value(QStringLiteral("name")).toString();
-                    entry.bytes = static_cast<qint64>(fo.value(QStringLiteral("bytes")).toDouble());
-                    entry.processed = fo.value(QStringLiteral("processed")).toBool();
-                    entry.queued = fo.value(QStringLiteral("queued")).toBool();
-                    if (entry.fileName.size() >= 21 && entry.fileName.startsWith(QStringLiteral("calib-"))) {
-                        entry.sessionId = entry.fileName.left(21);
-                    }
-                    entries.append(entry);
-                }
-            }
+        const QJsonArray results = document.object().value(QStringLiteral("results")).toArray();
+        entries.reserve(results.size());
+        for (const QJsonValue &value : results) {
+            if (!value.isObject()) continue;
+            const QJsonObject object = value.toObject();
+            CameraCalibEntry entry;
+            entry.sessionId = object.value(QStringLiteral("session_id")).toString();
+            entry.lidarFileName = object.value(QStringLiteral("lidar_file_name")).toString();
+            entry.lidarFileBytes = object.value(QStringLiteral("lidar_file_bytes")).toInteger();
+            entry.state = object.value(QStringLiteral("state")).toString();
+            entry.detail = object.value(QStringLiteral("detail")).toString();
+            entry.resultFileName = object.value(QStringLiteral("result_file_name")).toString();
+            entry.downloadFileName = object.value(QStringLiteral("download_file_name")).toString();
+            entry.resultFileBytes = object.value(QStringLiteral("result_file_bytes")).toInteger();
+            entry.downloadUrl = object.value(QStringLiteral("download_url")).toString();
+            entry.resultAvailable = object.value(QStringLiteral("result_available")).toBool() &&
+                                    !entry.downloadUrl.isEmpty();
+            entries.append(entry);
         }
 
-        QNetworkRequest reqStatus(statusUrl);
-        reqStatus.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        if (!user.isEmpty() && !password.isEmpty()) {
-            const QString credentials = QStringLiteral("%1:%2").arg(user, password);
-            reqStatus.setRawHeader("Authorization", "Basic " + credentials.toUtf8().toBase64());
+        const QString status = entries.isEmpty() ? QString::fromUtf8("결과 없음")
+                                                  : entries.constFirst().state;
+        const QString currentSession = entries.isEmpty() ? QString() : entries.constFirst().sessionId;
+        appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 목록 %1건 조회 완료")
+                               .arg(entries.size()));
+        if (m_cameraCalibDialog != nullptr) {
+            m_cameraCalibDialog->setCameraInfo(host, status, currentSession);
+            m_cameraCalibDialog->setEntries(entries);
         }
-
-        QNetworkReply *replyStatus = mgr->get(reqStatus);
-        connect(replyStatus, &QNetworkReply::finished, this, [this, replyStatus, mgr, host, entries] {
-            replyStatus->deleteLater();
-            mgr->deleteLater();
-
-            QString status = QStringLiteral("연결 성공");
-            QString currentSession;
-            if (replyStatus->error() == QNetworkReply::NoError) {
-                const QJsonObject so = QJsonDocument::fromJson(replyStatus->readAll()).object();
-                status = so.value(QStringLiteral("status")).toString();
-                currentSession = so.value(QStringLiteral("session_id")).toString();
-            }
-
-            if (m_cameraCalibDialog != nullptr) {
-                m_cameraCalibDialog->setCameraInfo(host, status, currentSession);
-                m_cameraCalibDialog->setEntries(entries);
-            }
-        });
     });
 
     m_cameraCalibDialog->show();

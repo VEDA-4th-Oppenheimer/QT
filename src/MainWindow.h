@@ -62,7 +62,9 @@ private:
     void configureScanFetcher();
     void openScanFile();
     void openCalibrationResultFile();
-    void fetchCalibrationResultFromCamera();
+    void downloadCalibrationResult(const QString &sessionId,
+                                   const QString &downloadUrl,
+                                   const QString &downloadFileName);
     void showCameraCalibDialog();
     void showScanListDialog();
 

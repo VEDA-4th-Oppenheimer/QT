@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QColor>
 
 CameraCalibDialog::CameraCalibDialog(QWidget *parent) : QDialog(parent) {
     setWindowTitle(QString::fromUtf8("CCTV 원격 캘리브레이션 결과 (RT) 선택"));
@@ -69,18 +70,35 @@ CameraCalibDialog::CameraCalibDialog(QWidget *parent) : QDialog(parent) {
         .arg(Theme::AccentBg.name(), Theme::AccentBright.name()));
     root->addWidget(m_list, 1);
 
-    auto handleSelect = [this](QListWidgetItem *it) {
-        if (!it) return;
-        const QString sessionId = it->data(Qt::UserRole).toString();
-        const QString fileName = it->data(Qt::UserRole + 1).toString();
-        emit sessionChosen(sessionId, fileName);
-        accept();
-    };
-
-    connect(m_list, &QListWidget::itemActivated, this, handleSelect);
-    connect(m_list, &QListWidget::itemClicked, this, handleSelect);
-
     auto *bottom = new QHBoxLayout;
+    m_downloadButton = new QPushButton(QString::fromUtf8("선택 결과 다운로드"), this);
+    m_downloadButton->setFixedHeight(28);
+    m_downloadButton->setCursor(Qt::PointingHandCursor);
+    m_downloadButton->setStyleSheet(btnCss);
+    m_downloadButton->setEnabled(false);
+    connect(m_downloadButton, &QPushButton::clicked, this, [this] {
+        QListWidgetItem *item = m_list->currentItem();
+        if (item == nullptr || !item->data(Qt::UserRole + 3).toBool()) return;
+
+        emit downloadRequested(item->data(Qt::UserRole).toString(),
+                               item->data(Qt::UserRole + 1).toString(),
+                               item->data(Qt::UserRole + 2).toString());
+    });
+    connect(m_list, &QListWidget::currentItemChanged, this,
+            [this](QListWidgetItem *current, QListWidgetItem *) {
+        const bool available = current != nullptr &&
+                               current->data(Qt::UserRole + 3).toBool();
+        m_downloadButton->setEnabled(available);
+        if (current == nullptr) {
+            m_note->setText(QString::fromUtf8("다운로드할 결과를 선택하세요."));
+        } else if (available) {
+            m_note->setText(QString::fromUtf8("선택한 캘리브레이션 결과를 다운로드할 수 있습니다."));
+        } else {
+            m_note->setText(QString::fromUtf8("이 세션은 아직 다운로드할 결과가 없습니다."));
+        }
+    });
+
+    bottom->addWidget(m_downloadButton);
     bottom->addStretch(1);
     auto *btnClose = new QPushButton(QString::fromUtf8("닫기"), this);
     btnClose->setFixedHeight(28);
@@ -99,17 +117,38 @@ void CameraCalibDialog::setCameraInfo(const QString &host, const QString &status
 
 void CameraCalibDialog::setEntries(const QVector<CameraCalibEntry> &entries) {
     m_list->clear();
+    m_downloadButton->setEnabled(false);
+    m_note->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextMuted.name()));
     for (const auto &e : entries) {
-        const QString size = e.bytes > 0 ? QStringLiteral("%1 KB").arg(e.bytes / 1024) : QStringLiteral("—");
-        const QString state = e.processed ? QString::fromUtf8("완료됨 (RT 생성)") : (e.queued ? QString::fromUtf8("처리 중") : QString::fromUtf8("대기"));
-        auto *it = new QListWidgetItem(QStringLiteral("%1\n  세션: %2 · %3 · %4")
-                                           .arg(e.fileName, e.sessionId, size, state));
+        const QString resultSize = e.resultFileBytes > 0
+                                       ? QStringLiteral("%1 KB").arg((e.resultFileBytes + 1023) / 1024)
+                                       : QStringLiteral("—");
+        const QString resultName = e.resultFileName.isEmpty()
+                                       ? QStringLiteral("calibration_result.json")
+                                       : e.resultFileName;
+        const QString state = e.state.isEmpty() ? QStringLiteral("-") : e.state;
+        const QString availability = e.resultAvailable
+                                         ? QString::fromUtf8("다운로드 가능")
+                                         : QString::fromUtf8("결과 없음");
+        auto *it = new QListWidgetItem(
+            QString::fromUtf8("%1\n  LiDAR: %2\n  상태: %3 · 결과: %4 · %5 · %6")
+                .arg(e.sessionId,
+                     e.lidarFileName.isEmpty() ? QStringLiteral("-") : e.lidarFileName,
+                     state,
+                     resultName,
+                     resultSize,
+                     availability));
         it->setData(Qt::UserRole, e.sessionId);
-        it->setData(Qt::UserRole + 1, e.fileName);
+        it->setData(Qt::UserRole + 1, e.downloadUrl);
+        it->setData(Qt::UserRole + 2, e.downloadFileName);
+        it->setData(Qt::UserRole + 3, e.resultAvailable);
+        if (!e.resultAvailable) {
+            it->setForeground(QColor(Theme::TextMuted));
+        }
         m_list->addItem(it);
     }
     m_note->setText(entries.isEmpty() ? QString::fromUtf8("사용 가능한 캘리브레이션 세션이 없습니다.")
-                                      : QString::fromUtf8("목록에서 적용할 세션 항목을 클릭하세요."));
+                                      : QString::fromUtf8("결과를 선택한 후 다운로드 버튼을 누르세요."));
 }
 
 void CameraCalibDialog::setErrorMessage(const QString &msg) {

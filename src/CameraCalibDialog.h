@@ -8,11 +8,16 @@ class QLabel;
 class QPushButton;
 
 struct CameraCalibEntry {
-    QString fileName;
     QString sessionId;
-    qint64  bytes = 0;
-    bool    processed = false;
-    bool    queued = false;
+    QString lidarFileName;
+    QString state;
+    QString detail;
+    QString resultFileName;
+    QString downloadFileName;
+    QString downloadUrl;
+    qint64 lidarFileBytes = 0;
+    qint64 resultFileBytes = 0;
+    bool resultAvailable = false;
 };
 
 class CameraCalibDialog : public QDialog {
@@ -26,11 +31,14 @@ public:
 
 signals:
     void refreshRequested();
-    void sessionChosen(const QString &sessionId, const QString &fileName);
+    void downloadRequested(const QString &sessionId,
+                           const QString &downloadUrl,
+                           const QString &downloadFileName);
     void openLocalFileRequested();
 
 private:
     QLabel *m_statusLabel = nullptr;
     QListWidget *m_list = nullptr;
     QLabel *m_note = nullptr;
+    QPushButton *m_downloadButton = nullptr;
 };
