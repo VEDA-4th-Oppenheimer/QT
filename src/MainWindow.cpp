@@ -58,6 +58,18 @@
 #include <QAuthenticator>
 
 namespace {
+
+/* 카메라 OpenSDK(캘리브레이션 API) 접속 스킴.
+ *
+ * ⚠️ 브링업 편의로 http 를 쓰는 중이다. 되돌릴 때는 이 한 줄만 "https" 로
+ *   바꾸면 되고, URL 조립과 스킴 검증이 전부 이 상수를 본다.
+ *
+ * ⚠️ http 로 두면 카메라 계정/비밀번호가 Basic 인증 헤더에 실려 **평문으로**
+ *   나간다(base64 는 인코딩이지 암호화가 아니다). 같은 네트워크에 있는
+ *   누구든 그대로 읽을 수 있다. 데모·제출본으로 나가기 전에 https 로
+ *   되돌릴 것. */
+constexpr const char *kCalibScheme = "http";
+
 QString sourceForTag(const QString &tag) {
     if (tag == "SCAN" || tag == "EXPORT")
         return "RPi4B";
@@ -369,7 +381,12 @@ void MainWindow::rebuildUi() {
     connect(m_topView, &TopViewPanel::showScanListDialogRequested, this, &MainWindow::showScanListDialog);
     connect(m_topView, &TopViewPanel::openCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
     connect(m_topView, &TopViewPanel::fetchCalibResultFromCameraRequested, this, &MainWindow::showCameraCalibDialog);
-    connect(m_topView, &TopViewPanel::fullScreenToggleRequested, this, &MainWindow::toggleTopViewFullScreen);
+    // 큐드로 받는다. 이 시그널은 지도 위젯이 자기 더블클릭을 처리하는 도중에
+    // 나오는데, 슬롯은 그 위젯이 든 패널을 다른 창으로 reparent 한다. 패널 안에
+    // ScanView3D(QOpenGLWidget) 가 있어 reparent 마다 GL 컨텍스트가 파기·재생성
+    // 되므로, 이벤트 전달이 끝난 뒤로 미뤄야 안전하다.
+    connect(m_topView, &TopViewPanel::fullScreenToggleRequested,
+            this, &MainWindow::toggleTopViewFullScreen, Qt::QueuedConnection);
 }
 
 QWidget *MainWindow::buildDashboardTab() {
@@ -403,9 +420,9 @@ QWidget *MainWindow::buildDashboardTab() {
     // 아래로는 못 끌게 막아준다(TOP-VIEW 쪽은 자기 minimumWidth 로 버틴다).
     camPane->setMinimumWidth(520);
 
+    // 시그널 연결은 rebuildUi() 가 한곳에서 한다 — 여기서 또 connect 하면
+    // 같은 슬롯이 두 번 불려서 더블클릭 한 번에 detach 후 즉시 attach 가 된다.
     m_topView = new TopViewPanel(page);
-    connect(m_topView, &TopViewPanel::fullScreenToggleRequested,
-            this, &MainWindow::toggleTopViewFullScreen);
 
     // 좌(CCTV)/우(TOP-VIEW) 비율을 사용자가 정한다. 현장마다 무엇을 크게 볼지가
     // 달라서(영상 감시 위주 / 스캔 확인 위주) 고정 430px 로는 늘 누군가 손해였다.
@@ -781,20 +798,22 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
         QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
     if (savePath.isEmpty()) return;
 
-    const QString apiBase = QStringLiteral("http://%1/opensdk/calibration").arg(host);
+    const QString apiBase = QStringLiteral("%1://%2/opensdk/calibration")
+                                .arg(QLatin1String(kCalibScheme), host);
     const QString relativePath = downloadUrl.trimmed();
     QUrl resultUrl;
     const QUrl suppliedUrl(relativePath);
     if (!suppliedUrl.isRelative()) {
         resultUrl = suppliedUrl;
     } else if (relativePath.startsWith(QStringLiteral("/opensdk/"))) {
-        resultUrl = QUrl(QStringLiteral("http://%1%2").arg(host, relativePath));
+        resultUrl = QUrl(QStringLiteral("%1://%2%3")
+                             .arg(QLatin1String(kCalibScheme), host, relativePath));
     } else {
         const QString separator = relativePath.startsWith('/') ? QString() : QStringLiteral("/");
         resultUrl = QUrl(apiBase + separator + relativePath);
     }
 
-    if (!resultUrl.isValid() ||
+    if (!resultUrl.isValid() || resultUrl.scheme() != QLatin1String(kCalibScheme) ||
         resultUrl.host().compare(host, Qt::CaseInsensitive) != 0) {
         const QString error = QString::fromUtf8("서버가 잘못된 결과 다운로드 주소를 반환했습니다: %1")
                                   .arg(downloadUrl);
@@ -930,7 +949,8 @@ void MainWindow::showCameraCalibDialog() {
         auth->setPassword(password);
     });
 
-    const QUrl resultsUrl(QStringLiteral("http://%1/opensdk/calibration/results").arg(host));
+    const QUrl resultsUrl(QStringLiteral("%1://%2/opensdk/calibration/results")
+                              .arg(QLatin1String(kCalibScheme), host));
 
     QNetworkRequest request(resultsUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
