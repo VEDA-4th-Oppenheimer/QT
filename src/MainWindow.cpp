@@ -381,7 +381,12 @@ void MainWindow::rebuildUi() {
     connect(m_topView, &TopViewPanel::showScanListDialogRequested, this, &MainWindow::showScanListDialog);
     connect(m_topView, &TopViewPanel::openCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
     connect(m_topView, &TopViewPanel::fetchCalibResultFromCameraRequested, this, &MainWindow::showCameraCalibDialog);
-    connect(m_topView, &TopViewPanel::fullScreenToggleRequested, this, &MainWindow::toggleTopViewFullScreen);
+    // 큐드로 받는다. 이 시그널은 지도 위젯이 자기 더블클릭을 처리하는 도중에
+    // 나오는데, 슬롯은 그 위젯이 든 패널을 다른 창으로 reparent 한다. 패널 안에
+    // ScanView3D(QOpenGLWidget) 가 있어 reparent 마다 GL 컨텍스트가 파기·재생성
+    // 되므로, 이벤트 전달이 끝난 뒤로 미뤄야 안전하다.
+    connect(m_topView, &TopViewPanel::fullScreenToggleRequested,
+            this, &MainWindow::toggleTopViewFullScreen, Qt::QueuedConnection);
 }
 
 QWidget *MainWindow::buildDashboardTab() {
@@ -415,9 +420,9 @@ QWidget *MainWindow::buildDashboardTab() {
     // 아래로는 못 끌게 막아준다(TOP-VIEW 쪽은 자기 minimumWidth 로 버틴다).
     camPane->setMinimumWidth(520);
 
+    // 시그널 연결은 rebuildUi() 가 한곳에서 한다 — 여기서 또 connect 하면
+    // 같은 슬롯이 두 번 불려서 더블클릭 한 번에 detach 후 즉시 attach 가 된다.
     m_topView = new TopViewPanel(page);
-    connect(m_topView, &TopViewPanel::fullScreenToggleRequested,
-            this, &MainWindow::toggleTopViewFullScreen);
 
     // 좌(CCTV)/우(TOP-VIEW) 비율을 사용자가 정한다. 현장마다 무엇을 크게 볼지가
     // 달라서(영상 감시 위주 / 스캔 확인 위주) 고정 430px 로는 늘 누군가 손해였다.
