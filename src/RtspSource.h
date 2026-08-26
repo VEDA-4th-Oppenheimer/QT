@@ -26,6 +26,14 @@ public:
     // 카메라 없이 decoder 이후의 source 동작을 검증할 때 사용한다.
     void ingestMetadataPayload(int channel, const QByteArray &payload);
 
+    // TTL 만료 검사 및 플러시 (테스트 및 주기적 호출용)
+    void flushExpired(qint64 nowMs = 0);
+
+    // 캐시 수명(기본 500ms) 설정 및 조회
+    static constexpr qint64 kDefaultTtlMs = 500;
+    void setCacheTtlMs(qint64 ttlMs) { m_cacheTtlMs = ttlMs; }
+    qint64 cacheTtlMs() const { return m_cacheTtlMs; }
+
 public slots:
     // 카메라 설정을 적용한다(최초 로드, 그리고 '카메라 설정' 메뉴에서 변경 시).
     // 같은 내용이면 아무것도 하지 않는다 — 돌고 있는 스트림을 괜히 끊지 않으려고.
@@ -42,13 +50,24 @@ signals:
     void channelStatusChanged(int channel, bool online, double fps);
     void logLine(const QString &tag, const QString &msg);
 
+private slots:
+    void onFlushTimer();
+
 private:
     void stopAll();
+    void emitMergedObjects();
+
+    struct CachedObject {
+        SpatialObject object;
+        qint64 lastSeenMs = 0;
+    };
 
     QMap<int, RtspDecoder *> m_decoders;
-    QMap<int, QVector<SpatialObject>> m_objectsByChannel;
+    QMap<int, QMap<QString, CachedObject>> m_cachedObjectsByChannel;
     QMap<int, QByteArray> m_metadataBuffers;
     QSet<int> m_metadataLogSeen;
     QJsonObject              m_applied;   // 현재 돌고 있는 채널 설정(중복 적용 방지)
     QSet<int>                m_gaveUp;    // 재시도를 포기해 스레드가 끝난 채널
+    QTimer                  *m_flushTimer = nullptr;
+    qint64                   m_cacheTtlMs = kDefaultTtlMs;
 };
