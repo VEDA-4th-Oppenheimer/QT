@@ -30,42 +30,27 @@ QString SpatialProjector::calibrationModeName() const {
 }
 
 void SpatialProjector::applyModeProfiles() {
-    CameraProfile cp1;
+    CameraProfile cp1 = m_profiles.value(1);
     cp1.channel = 1;
-    cp1.imageWidth = 2592;
-    cp1.imageHeight = 1520;
-    cp1.fx = 2033.901952;
-    cp1.fy = 2037.779638;
-    cp1.cx = 1337.029701;
-    cp1.cy = 745.370056;
-    cp1.defaultGroundY = 1.789;
-    cp1.k1 = -0.5653174394854492;
-    cp1.k2 =  0.34459385610316223;
-    cp1.p1 = -0.0039145365522611315;
-    cp1.p2 =  0.0008182748566205869;
-    cp1.k3 = -0.10809412486837452;
-
-    if (m_calibMode == CalibrationMode::Automatic) {
-        // 최신 카메라 이동 후 캘리브레이션 RT (ch1_20260819_coverage_gate50_holdout_pair3_v1)
-        const double autoR[9] = {
-            -0.8993516327308704, -0.021677413359161492,  0.4366883676655169,
-             0.03164503356422315,  0.9929235347745676,   0.11446154787306081,
-            -0.43607938790435485,  0.11676019801642104, -0.8923014197030784
-        };
-        const double autoT[3] = { 0.05155019269565374, 0.0786413559428178, 0.035313251335202904 };
-        for (int i = 0; i < 9; ++i) cp1.r[i] = autoR[i];
-        for (int i = 0; i < 3; ++i) cp1.t[i] = autoT[i];
-    } else {
-        // Manual Calibration 실측 RT (T_camera_lidar_110828.json 차루코 보드 기준)
-        const double manualR[9] = {
-            -0.9835214245376979, -0.14262115873630146,  0.11110721198937619,
-            -0.07778521792557222,  0.8885863982986189,   0.452066004728247,
-            -0.16320253474627378,  0.43597410225769473, -0.8850375781925809
-        };
-        const double manualT[3] = { -0.040047519204563925, 0.07478418688424698, 0.1357633054748434 };
-        for (int i = 0; i < 9; ++i) cp1.r[i] = manualR[i];
-        for (int i = 0; i < 3; ++i) cp1.t[i] = manualT[i];
+    if (cp1.imageWidth <= 0) cp1.imageWidth = 2592;
+    if (cp1.imageHeight <= 0) cp1.imageHeight = 1520;
+    if (cp1.fx <= 0.0) cp1.fx = 2033.901952;
+    if (cp1.fy <= 0.0) cp1.fy = 2037.779638;
+    if (cp1.cx <= 0.0) cp1.cx = 1337.029701;
+    if (cp1.cy <= 0.0) cp1.cy = 745.370056;
+    if (cp1.defaultGroundY <= 0.0) cp1.defaultGroundY = 1.789;
+    if (cp1.k1 == 0.0 && cp1.k2 == 0.0) {
+        cp1.k1 = -0.5653174394854492;
+        cp1.k2 =  0.34459385610316223;
+        cp1.p1 = -0.0039145365522611315;
+        cp1.p2 =  0.0008182748566205869;
+        cp1.k3 = -0.10809412486837452;
     }
+
+    const double *activeR = (m_calibMode == CalibrationMode::Automatic) ? m_autoR : m_manualR;
+    const double *activeT = (m_calibMode == CalibrationMode::Automatic) ? m_autoT : m_manualT;
+    for (int i = 0; i < 9; ++i) cp1.r[i] = activeR[i];
+    for (int i = 0; i < 3; ++i) cp1.t[i] = activeT[i];
 
     m_profiles.insert(1, cp1);
 }
@@ -299,6 +284,184 @@ bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int
                                     .arg(cp.t[2], 0, 'f', 4);
     if (outSummary) *outSummary = summaryText;
 
+    return true;
+}
+
+bool SpatialProjector::loadIntrinsicProfileJson(const QString &filePath, int channel, QString *outSummary) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (outSummary) *outSummary = QStringLiteral("파일을 열 수 없습니다: ") + filePath;
+        return false;
+    }
+    const QByteArray data = file.readAll();
+    file.close();
+    return loadIntrinsicProfileData(data, channel, outSummary);
+}
+
+bool SpatialProjector::loadIntrinsicProfileData(const QByteArray &jsonData, int channel, QString *outSummary) {
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &err);
+    if (doc.isNull() || !doc.isObject()) {
+        if (outSummary) *outSummary = QStringLiteral("유효하지 않은 JSON 데이터입니다: ") + err.errorString();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    QJsonObject target = root;
+    if (root.contains("camera") && root.value("camera").isObject()) {
+        target = root.value("camera").toObject();
+    } else if (root.contains(QString::number(channel)) && root.value(QString::number(channel)).isObject()) {
+        target = root.value(QString::number(channel)).toObject();
+    }
+
+    CameraProfile cp = profile(channel);
+    cp.channel = channel;
+    bool updated = false;
+
+    // Intrinsic (fx, fy, cx, cy)
+    QJsonObject intr = target.contains("intrinsic") && target.value("intrinsic").isObject()
+                           ? target.value("intrinsic").toObject()
+                           : target;
+
+    if (intr.contains("fx")) { cp.fx = intr.value("fx").toDouble(cp.fx); updated = true; }
+    if (intr.contains("fy")) { cp.fy = intr.value("fy").toDouble(cp.fy); updated = true; }
+    if (intr.contains("cx")) { cp.cx = intr.value("cx").toDouble(cp.cx); updated = true; }
+    if (intr.contains("cy")) { cp.cy = intr.value("cy").toDouble(cp.cy); updated = true; }
+
+    // Distortion
+    if (target.contains("distortion") && target.value("distortion").isArray()) {
+        const QJsonArray dist = target.value("distortion").toArray();
+        if (dist.size() >= 4) {
+            cp.k1 = dist.at(0).toDouble();
+            cp.k2 = dist.at(1).toDouble();
+            cp.p1 = dist.at(2).toDouble();
+            cp.p2 = dist.at(3).toDouble();
+            cp.k3 = (dist.size() >= 5) ? dist.at(4).toDouble() : 0.0;
+            updated = true;
+        }
+    }
+
+    // Resolution
+    if (target.contains("resolution") && target.value("resolution").isArray()) {
+        const QJsonArray res = target.value("resolution").toArray();
+        if (res.size() >= 2) {
+            cp.imageWidth = res.at(0).toInt(cp.imageWidth);
+            cp.imageHeight = res.at(1).toInt(cp.imageHeight);
+            updated = true;
+        }
+    } else {
+        if (target.contains("image_width"))  { cp.imageWidth  = target.value("image_width").toInt(cp.imageWidth); updated = true; }
+        if (target.contains("image_height")) { cp.imageHeight = target.value("image_height").toInt(cp.imageHeight); updated = true; }
+    }
+
+    if (!updated) {
+        if (outSummary) *outSummary = QStringLiteral("JSON에서 카메라 내부 파라미터(fx, fy, cx, cy 등)를 찾을 수 없습니다.");
+        return false;
+    }
+
+    cp.enabled = true;
+    m_profiles.insert(channel, cp);
+
+    const QString summaryText = QString::fromUtf8("CH%1 카메라 내부 파라미터 적용 완료\n"
+                                                  "fx=%2, fy=%3, cx=%4, cy=%5\n"
+                                                  "해상도: %6x%7")
+                                    .arg(channel)
+                                    .arg(cp.fx, 0, 'f', 2)
+                                    .arg(cp.fy, 0, 'f', 2)
+                                    .arg(cp.cx, 0, 'f', 2)
+                                    .arg(cp.cy, 0, 'f', 2)
+                                    .arg(cp.imageWidth)
+                                    .arg(cp.imageHeight);
+    if (outSummary) *outSummary = summaryText;
+    return true;
+}
+
+bool SpatialProjector::loadManualExtrinsicJson(const QString &filePath, int channel, QString *outSummary) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (outSummary) *outSummary = QStringLiteral("파일을 열 수 없습니다: ") + filePath;
+        return false;
+    }
+    const QByteArray data = file.readAll();
+    file.close();
+    return loadManualExtrinsicData(data, channel, outSummary);
+}
+
+bool SpatialProjector::loadManualExtrinsicData(const QByteArray &jsonData, int channel, QString *outSummary) {
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &err);
+    if (doc.isNull() || !doc.isObject()) {
+        if (outSummary) *outSummary = QStringLiteral("유효하지 않은 JSON 데이터입니다: ") + err.errorString();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    QJsonObject ext = root.contains("extrinsic") && root.value("extrinsic").isObject()
+                          ? root.value("extrinsic").toObject()
+                          : root;
+
+    bool haveR = false;
+    bool haveT = false;
+    double r[9] = {0};
+    double t[3] = {0};
+
+    // 1. rotation_matrix 파싱 (2D 또는 1D)
+    if (ext.contains("rotation_matrix") && ext.value("rotation_matrix").isArray()) {
+        const QJsonArray rMat = ext.value("rotation_matrix").toArray();
+        if (rMat.size() == 3 && rMat.at(0).isArray()) {
+            int idx = 0;
+            for (int row = 0; row < 3; ++row) {
+                const QJsonArray rRow = rMat.at(row).toArray();
+                for (int col = 0; col < 3 && col < rRow.size(); ++col) {
+                    r[idx++] = rRow.at(col).toDouble();
+                }
+            }
+            if (idx == 9) haveR = true;
+        } else if (rMat.size() == 9) {
+            for (int i = 0; i < 9; ++i) r[i] = rMat.at(i).toDouble();
+            haveR = true;
+        }
+    } else if (ext.contains("r") && ext.value("r").isArray()) {
+        const QJsonArray rArr = ext.value("r").toArray();
+        if (rArr.size() == 9) {
+            for (int i = 0; i < 9; ++i) r[i] = rArr.at(i).toDouble();
+            haveR = true;
+        }
+    }
+
+    // 2. translation_m 또는 t 또는 translation_vector 파싱
+    QString tKey;
+    if (ext.contains("translation_m")) tKey = QStringLiteral("translation_m");
+    else if (ext.contains("translation_vector")) tKey = QStringLiteral("translation_vector");
+    else if (ext.contains("t")) tKey = QStringLiteral("t");
+
+    if (!tKey.isEmpty() && ext.value(tKey).isArray()) {
+        const QJsonArray tArr = ext.value(tKey).toArray();
+        if (tArr.size() == 3) {
+            for (int i = 0; i < 3; ++i) t[i] = tArr.at(i).toDouble();
+            haveT = true;
+        }
+    }
+
+    if (!haveR || !haveT) {
+        if (outSummary) *outSummary = QStringLiteral("JSON에서 외부 파라미터(rotation_matrix 및 translation_m)를 찾을 수 없습니다.");
+        return false;
+    }
+
+    for (int i = 0; i < 9; ++i) m_manualR[i] = r[i];
+    for (int i = 0; i < 3; ++i) m_manualT[i] = t[i];
+    m_hasCustomManualRt = true;
+
+    // 수동 RT 모드로 즉시 전환 및 적용
+    setCalibrationMode(CalibrationMode::Manual);
+
+    const QString summaryText = QString::fromUtf8("Manual RT (외부 파라미터) 적용 완료\n"
+                                                  "t = [%1, %2, %3] m\n"
+                                                  "수동 RT 모드로 즉시 전환되었습니다.")
+                                    .arg(m_manualT[0], 0, 'f', 4)
+                                    .arg(m_manualT[1], 0, 'f', 4)
+                                    .arg(m_manualT[2], 0, 'f', 4);
+    if (outSummary) *outSummary = summaryText;
     return true;
 }
 

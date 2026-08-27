@@ -62,6 +62,8 @@ private:
     void configureScanFetcher();
     void openScanFile();
     void openCalibrationResultFile();
+    void openIntrinsicProfileFile();
+    void openManualRtFile();
     void downloadCalibrationResult(const QString &sessionId,
                                    const QString &downloadUrl,
                                    const QString &downloadFileName);

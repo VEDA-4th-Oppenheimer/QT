@@ -76,6 +76,14 @@ public:
     bool loadCalibrationResultJson(const QString &filePath, int channel = 1, QString *outSummary = nullptr);
     bool loadCalibrationResultData(const QByteArray &jsonData, int channel = 1, QString *outSummary = nullptr);
 
+    // 카메라 내부 파라미터 profile (camera.json 또는 calibration_profiles.json 형식) 로드 및 즉시 반영
+    bool loadIntrinsicProfileJson(const QString &filePath, int channel = 1, QString *outSummary = nullptr);
+    bool loadIntrinsicProfileData(const QByteArray &jsonData, int channel = 1, QString *outSummary = nullptr);
+
+    // 수동 RT (T_camera_lidar_*.json 또는 manual_rt.json 형식) 로드 및 즉시 반영
+    bool loadManualExtrinsicJson(const QString &filePath, int channel = 1, QString *outSummary = nullptr);
+    bool loadManualExtrinsicData(const QByteArray &jsonData, int channel = 1, QString *outSummary = nullptr);
+
     // 픽셀 좌표 (u, v)를 렌즈 역왜곡 보정(Undistort) 후 지면 평면과의 교점으로 투영
     bool projectImageToGround(int channel,
                               double u,
@@ -98,6 +106,21 @@ private:
     CalibrationMode m_calibMode = CalibrationMode::Automatic;
     QMap<int, CameraProfile> m_profiles;
     double m_globalGroundY = 0.0;
+
+    // 모드별 RT (동적 로드 지원)
+    double m_autoR[9] = {
+        -0.8993516327308704, -0.021677413359161492,  0.4366883676655169,
+         0.03164503356422315,  0.9929235347745676,   0.11446154787306081,
+        -0.43607938790435485,  0.11676019801642104, -0.8923014197030784
+    };
+    double m_autoT[3] = { 0.05155019269565374, 0.0786413559428178, 0.035313251335202904 };
+    double m_manualR[9] = {
+        -0.9835214245376979, -0.14262115873630146,  0.11110721198937619,
+        -0.07778521792557222,  0.8885863982986189,   0.452066004728247,
+        -0.16320253474627378,  0.43597410225769473, -0.8850375781925809
+    };
+    double m_manualT[3] = { -0.040047519204563925, 0.07478418688424698, 0.1357633054748434 };
+    bool   m_hasCustomManualRt = false;
 
     // PCD 실측 방 물리적 경계 (사무실 기본 크기)
     double m_roomXMin = -5.0;

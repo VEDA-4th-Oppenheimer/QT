@@ -157,11 +157,74 @@ void testLoadCalibrationResultJson() {
     std::cout << "[PASS] testLoadCalibrationResultJson: loaded result.json format successfully!\n";
 }
 
+void testLoadIntrinsicProfileJson() {
+    SpatialProjector &projector = SpatialProjector::instance();
+
+    // camera.json 형식 테스트
+    const QByteArray sampleCameraJson = R"({
+        "camera": {
+            "model": "PNM-C16083RVQ",
+            "resolution": [1920, 1080],
+            "intrinsic": {"fx": 1500.5, "fy": 1502.5, "cx": 960.0, "cy": 540.0},
+            "distortion": [-0.25, 0.12, -0.001, 0.0005, -0.05]
+        }
+    })";
+
+    QString summary;
+    bool ok = projector.loadIntrinsicProfileData(sampleCameraJson, 1, &summary);
+    assert(ok);
+    assert(summary.contains("적용 완료"));
+
+    CameraProfile cp = projector.profile(1);
+    assert(std::abs(cp.fx - 1500.5) < 1e-3);
+    assert(std::abs(cp.fy - 1502.5) < 1e-3);
+    assert(std::abs(cp.cx - 960.0) < 1e-3);
+    assert(std::abs(cp.cy - 540.0) < 1e-3);
+    assert(cp.imageWidth == 1920);
+    assert(cp.imageHeight == 1080);
+    assert(std::abs(cp.k1 - (-0.25)) < 1e-3);
+
+    std::cout << "[PASS] testLoadIntrinsicProfileJson: loaded camera.json intrinsic format successfully!\n";
+}
+
+void testLoadManualExtrinsicJson() {
+    SpatialProjector &projector = SpatialProjector::instance();
+
+    // T_camera_lidar_*.json 형식 테스트
+    const QByteArray sampleManualExtrinsicJson = R"({
+        "status": "PASS",
+        "extrinsic": {
+            "rotation_matrix": [
+                [-0.9835, -0.1426,  0.1111],
+                [-0.0778,  0.8886,  0.4521],
+                [-0.1632,  0.4360, -0.8850]
+            ],
+            "translation_m": [-0.0400, 0.0748, 0.1358]
+        }
+    })";
+
+    QString summary;
+    bool ok = projector.loadManualExtrinsicData(sampleManualExtrinsicJson, 1, &summary);
+    assert(ok);
+    assert(summary.contains("적용 완료"));
+    assert(projector.calibrationMode() == CalibrationMode::Manual);
+
+    CameraProfile cp = projector.profile(1);
+    assert(std::abs(cp.t[0] - (-0.0400)) < 1e-3);
+    assert(std::abs(cp.t[1] - 0.0748) < 1e-3);
+    assert(std::abs(cp.t[2] - 0.1358) < 1e-3);
+    assert(std::abs(cp.r[0] - (-0.9835)) < 1e-3);
+
+    std::cout << "[PASS] testLoadManualExtrinsicJson: loaded T_camera_lidar manual RT format successfully!\n";
+}
+
 int main() {
     testSpatialProjectorCH1();
     testSpatialMetadataOnvifWithProjection();
     test30SecondsContinuousNoBoundaryEscape();
     testLoadCalibrationResultJson();
-    std::cout << "All spatial projection tests (including result.json loading) PASS!\n";
+    testLoadIntrinsicProfileJson();
+    testLoadManualExtrinsicJson();
+    std::cout << "All spatial projection tests (including intrinsic and manual RT loading) PASS!\n";
     return 0;
 }

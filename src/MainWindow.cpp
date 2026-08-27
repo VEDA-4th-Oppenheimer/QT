@@ -203,15 +203,14 @@ void MainWindow::rebuildUi() {
         QSettings().setValue(QStringLiteral("calib/is_manual"), manual);
         appendLog("CALIB", QString::fromUtf8("캘리브레이션 RT 모드 전환: %1").arg(SpatialProjector::instance().calibrationModeName()));
     });
+    connect(m_settingsTab, &SettingsTab::loadManualRtRequested, this, &MainWindow::openManualRtFile);
     connect(m_settingsTab, &SettingsTab::cameraSettingsRequested, this, &MainWindow::editCameraSettings);
     connect(m_settingsTab, &SettingsTab::cameraReconnectRequested, this, [this] {
         appendLog("RTSP", QString::fromUtf8("사용자 요청 — 카메라에 다시 연결합니다"));
         m_video->reconnectAll();
     });
-    connect(m_settingsTab, &SettingsTab::topViewFullScreenToggled, this, &MainWindow::toggleTopViewFullScreen);
     connect(m_settingsTab, &SettingsTab::sensorHeightRequested, this, &MainWindow::editSensorHeight);
-    connect(m_settingsTab, &SettingsTab::openScanFileRequested, this, &MainWindow::openScanFile);
-    connect(m_settingsTab, &SettingsTab::loadCalibResultRequested, this, &MainWindow::openCalibrationResultFile);
+    connect(m_settingsTab, &SettingsTab::loadIntrinsicProfileRequested, this, &MainWindow::openIntrinsicProfileFile);
     connect(m_settingsTab, &SettingsTab::logoutRequested, this, &MainWindow::logout);
 
     // 테마를 바꾸면 여기까지 다시 오므로, 보고 있던 탭으로 되돌려 놓는다.
@@ -758,6 +757,52 @@ void MainWindow::openCalibrationResultFile() {
         appendLog("CALIB", QString::fromUtf8("캘리브레이션 결과 불러오기 실패: %1").arg(summary));
         QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
                              QString::fromUtf8("캘리브레이션 결과를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
+    }
+}
+
+void MainWindow::openIntrinsicProfileFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QString::fromUtf8("카메라 내부 파라미터(Intrinsic) 파일 열기"), QString(),
+        QString::fromUtf8("카메라 파라미터 (*.json);;모든 파일 (*)"));
+    if (path.isEmpty()) return;
+
+    QString summary;
+    const bool success = SpatialProjector::instance().loadIntrinsicProfileJson(path, 1, &summary);
+    if (success) {
+        appendLog("CALIB", QString::fromUtf8("카메라 내부 파라미터 불러오기 성공: %1").arg(path));
+        appendLog("CALIB", summary);
+        QMessageBox::information(this, QString::fromUtf8("내부 파라미터 적용 완료"),
+                                 QString::fromUtf8("카메라 내부 파라미터가 성공적으로 적용되었습니다.\n\n%1").arg(summary));
+        if (m_topView) m_topView->update();
+    } else {
+        appendLog("CALIB", QString::fromUtf8("내부 파라미터 불러오기 실패: %1").arg(summary));
+        QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
+                             QString::fromUtf8("내부 파라미터를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
+    }
+}
+
+void MainWindow::openManualRtFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QString::fromUtf8("Manual RT (외부 파라미터) 파일 열기"), QString(),
+        QString::fromUtf8("Manual RT (*.json);;모든 파일 (*)"));
+    if (path.isEmpty()) return;
+
+    QString summary;
+    const bool success = SpatialProjector::instance().loadManualExtrinsicJson(path, 1, &summary);
+    if (success) {
+        appendLog("CALIB", QString::fromUtf8("Manual RT 불러오기 성공: %1").arg(path));
+        appendLog("CALIB", summary);
+        if (m_settingsTab != nullptr) {
+            m_settingsTab->setCalibMode(true);
+        }
+        QSettings().setValue(QStringLiteral("calib/is_manual"), true);
+        QMessageBox::information(this, QString::fromUtf8("Manual RT 적용 완료"),
+                                 QString::fromUtf8("수동 캘리브레이션 RT가 적용되었으며 Manual RT 모드로 전환되었습니다.\n\n%1").arg(summary));
+        if (m_topView) m_topView->update();
+    } else {
+        appendLog("CALIB", QString::fromUtf8("Manual RT 불러오기 실패: %1").arg(summary));
+        QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
+                             QString::fromUtf8("Manual RT를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
     }
 }
 

@@ -46,14 +46,22 @@ SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) 
     connect(m_demo, &QCheckBox::toggled, this, &SettingsTab::demoModeToggled);
     root->addWidget(m_demo);
 
-    // 캘리브레이션 RT 모드 전환 스위치
+    // 캘리브레이션 RT 모드 전환 스위치 및 Manual RT 첨부 버튼
+    auto *manualRtLayout = new QHBoxLayout;
     m_manualCalib = new QCheckBox(QStringLiteral("Manual RT 사용 (체크 해제 시 Automatic RT 사용)"), this);
     m_manualCalib->setChecked(state.manualCalib);
     connect(m_manualCalib, &QCheckBox::toggled, this, [this](bool checked) {
         setCalibMode(checked);
         emit calibModeToggled(checked);
     });
-    root->addWidget(m_manualCalib);
+    manualRtLayout->addWidget(m_manualCalib);
+
+    auto *btnAttachManualRt = new QPushButton(QStringLiteral("Manual RT 첨부..."), this);
+    btnAttachManualRt->setFixedHeight(26);
+    connect(btnAttachManualRt, &QPushButton::clicked, this, &SettingsTab::loadManualRtRequested);
+    manualRtLayout->addWidget(btnAttachManualRt);
+    manualRtLayout->addStretch(1);
+    root->addLayout(manualRtLayout);
 
     auto *buttons = new QHBoxLayout;
     auto addButton = [this, buttons](const QString &text, auto signal) {
@@ -65,9 +73,8 @@ SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) 
     addButton(QStringLiteral("카메라 설정"), &SettingsTab::cameraSettingsRequested);
     addButton(QStringLiteral("CCTV 재연결"), &SettingsTab::cameraReconnectRequested);
     addButton(QStringLiteral("센서 높이"), &SettingsTab::sensorHeightRequested);
-    addButton(QStringLiteral("스캔 파일 열기"), &SettingsTab::openScanFileRequested);
-    addButton(QStringLiteral("캘리브레이션 결과(result.json) 불러오기"), &SettingsTab::loadCalibResultRequested);
-    addButton(QStringLiteral("TOP-VIEW 전체화면"), &SettingsTab::topViewFullScreenToggled);
+    addButton(QStringLiteral("카메라 내부 파라미터 불러오기"), &SettingsTab::loadIntrinsicProfileRequested);
+    buttons->addStretch(1);
     root->addLayout(buttons);
 
     auto *bottom = new QHBoxLayout;
