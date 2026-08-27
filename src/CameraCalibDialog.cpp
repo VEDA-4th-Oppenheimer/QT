@@ -24,9 +24,15 @@ CameraCalibDialog::CameraCalibDialog(QWidget *parent) : QDialog(parent) {
         "QPushButton { background:%1; border:1px solid %2; border-radius:4px; color:%3;"
         " font-family:'JetBrains Mono','D2Coding',monospace; font-size:11px;"
         " padding:4px 10px; font-weight:600; }"
-        "QPushButton:hover { background:%4; color:%5; border-color:%5; }")
+        "QPushButton:hover { background:%4; color:%5; border-color:%5; }"
+        // 다운로드 버튼은 "결과 있는 세션"을 고르기 전까지 비활성이다. 비활성
+        // 모양을 안 주면 활성일 때와 똑같이 보여서, 눌러도 반응이 없는 걸
+        // 고장으로 오해한다. 아래 m_note 가 이유를 글로 알려준다.
+        "QPushButton:disabled { background:%6; color:%7; border:1px solid %8; }"
+        "QPushButton:disabled:hover { background:%6; color:%7; border:1px solid %8; }")
         .arg(Theme::PanelHead.name(), Theme::Border.name(), Theme::Text2.name())
-        .arg(Theme::AccentBg.name(), Theme::AccentBright.name());
+        .arg(Theme::AccentBg.name(), Theme::AccentBright.name())
+        .arg(Theme::NeutralBg.name(), Theme::TextGhost.name(), Theme::BorderSoft.name());
 
     auto *btnLocal = new QPushButton(QString::fromUtf8("📁 로컬 파일 열기..."), this);
     btnLocal->setFixedHeight(28);
@@ -76,6 +82,7 @@ CameraCalibDialog::CameraCalibDialog(QWidget *parent) : QDialog(parent) {
     m_downloadButton->setCursor(Qt::PointingHandCursor);
     m_downloadButton->setStyleSheet(btnCss);
     m_downloadButton->setEnabled(false);
+    m_downloadButton->setCursor(Qt::ArrowCursor);
     connect(m_downloadButton, &QPushButton::clicked, this, [this] {
         QListWidgetItem *item = m_list->currentItem();
         if (item == nullptr || !item->data(Qt::UserRole + 3).toBool()) return;
@@ -89,6 +96,7 @@ CameraCalibDialog::CameraCalibDialog(QWidget *parent) : QDialog(parent) {
         const bool available = current != nullptr &&
                                current->data(Qt::UserRole + 3).toBool();
         m_downloadButton->setEnabled(available);
+        m_downloadButton->setCursor(available ? Qt::PointingHandCursor : Qt::ArrowCursor);
         if (current == nullptr) {
             m_note->setText(QString::fromUtf8("다운로드할 결과를 선택하세요."));
         } else if (available) {
@@ -118,6 +126,7 @@ void CameraCalibDialog::setCameraInfo(const QString &host, const QString &status
 void CameraCalibDialog::setEntries(const QVector<CameraCalibEntry> &entries) {
     m_list->clear();
     m_downloadButton->setEnabled(false);
+    m_downloadButton->setCursor(Qt::ArrowCursor);
     m_note->setStyleSheet(Theme::mono(10) + QString("color:%1;").arg(Theme::TextMuted.name()));
     for (const auto &e : entries) {
         const QString resultSize = e.resultFileBytes > 0

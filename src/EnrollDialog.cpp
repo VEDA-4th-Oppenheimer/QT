@@ -174,10 +174,16 @@ void EnrollDialog::handleReply(QNetworkReply *reply) {
     const QJsonObject obj = QJsonDocument::fromJson(raw).object();
 
     if (reply->error() != QNetworkReply::NoError && http == 0) {
-        // 연결 자체가 안 된 경우 — 주소/포트 오류, 서버 미기동, 서버 인증서 검증 실패
-        showError(QString::fromUtf8("서버에 연결하지 못했습니다: %1\n\n"
-                                    "주소·포트를 확인하고, 발급 서비스가 실행 중인지 확인하세요.")
-                      .arg(reply->errorString()));
+        // 연결 자체가 안 된 경우 — 주소/포트 오류, 서버 미기동, 서버 인증서 검증 실패.
+        // 이 실패는 간헐적으로 나온다(첫 요청만 실패하고 다시 누르면 되는 식).
+        // errorString() 만으로는 어느 단계에서 끊겼는지 구분이 안 돼서, 다음에
+        // 재현됐을 때 바로 짚을 수 있게 QNetworkReply::NetworkError 코드를 같이
+        // 남긴다 — 6=SslHandshakeFailed, 3=HostNotFound, 4=Timeout 처럼 갈린다.
+        showError(QString::fromUtf8("서버에 연결하지 못했습니다: %1 (code %2)\n\n"
+                                    "주소·포트를 확인하고, 발급 서비스가 실행 중인지 확인하세요.\n"
+                                    "다시 눌러 되는 경우가 있다면 이 code 를 알려주세요.")
+                      .arg(reply->errorString())
+                      .arg(int(reply->error())));
         return;
     }
 
@@ -185,7 +191,22 @@ void EnrollDialog::handleReply(QNetworkReply *reply) {
         const QString msg = obj.value(QStringLiteral("error")).toString();
         showError(msg.isEmpty()
                       ? QString::fromUtf8("발급 실패 (HTTP %1)").arg(http)
-                      : QString::fromUtf8("발급 실패: %1").arg(msg));
+                      : QString::fromUtf8("발급 실패: %1 (HTTP %2)").arg(msg).arg(http));
+        return;
+    }
+
+    // HTTP 200 인데 전송 도중 끊긴 경우. 그냥 두면 잘린 본문이 JSON 파싱에
+    // 실패해 "서버 응답에 ca_crt 이(가) 없습니다" 처럼 엉뚱한 원인으로 보인다.
+    if (reply->error() != QNetworkReply::NoError) {
+        showError(QString::fromUtf8("응답을 끝까지 받지 못했습니다: %1 (code %2)")
+                      .arg(reply->errorString())
+                      .arg(int(reply->error())));
+        return;
+    }
+
+    if (obj.isEmpty()) {
+        showError(QString::fromUtf8("서버 응답을 해석하지 못했습니다 (JSON 아님, %1 바이트).")
+                      .arg(raw.size()));
         return;
     }
 
@@ -245,6 +266,17 @@ bool EnrollDialog::installBundle(const QJsonObject &o, QString *err) {
         QFile::remove(certDir + stale);
     }
 
+    // 쓰기 전에 응답에 필요한 값이 다 있는지 먼저 본다. 예전에는 쓰다가
+    // 중간에 실패하면 이미 쓴 파일이 그대로 남았다 — 특히 mqtt.json 이 남으면
+    // configReady() 가 true 가 되어, 다이얼로그는 "발급 실패"라고 말하는데
+    // 앱은 로그인된 상태가 됐다. 아래에서 mqtt.json 을 맨 마지막에 쓰는 것도
+    // 같은 이유다: 게이트가 되는 파일은 나머지가 다 성공한 뒤에만 생긴다.
+    const QJsonObject mqtt = o.value(QStringLiteral("mqtt")).toObject();
+    if (mqtt.value(QStringLiteral("host")).toString().isEmpty()) {
+        *err = QString::fromUtf8("서버 응답에 mqtt.host 가 없습니다.");
+        return false;
+    }
+
     struct Item { const char *key; QString path; bool secret; };
     const QList<Item> certs = {
         { "ca_crt",     certDir + QStringLiteral("/ca.crt"),              false },
@@ -263,27 +295,6 @@ bool EnrollDialog::installBundle(const QJsonObject &o, QString *err) {
             *err = QString::fromUtf8("파일을 쓰지 못했습니다: %1").arg(it.path);
             return false;
         }
-    }
-
-    // cert_dir 은 상대경로로 둔다 — resolveConfigPath 가 사용자 데이터 디렉터리
-    // 기준으로 찾아준다. 절대경로로 굳히면 홈 경로가 바뀔 때 깨진다.
-    const QJsonObject mqtt = o.value(QStringLiteral("mqtt")).toObject();
-    QJsonObject mqttOut;
-    mqttOut["host"]     = mqtt.value(QStringLiteral("host")).toString();
-    mqttOut["port"]     = mqtt.value(QStringLiteral("port")).toInt(8883);
-    mqttOut["cert_dir"] = QStringLiteral("certs");
-    // 스캔 파일(8443)도 같은 이유로 호스트명 검증이 걸린다 — ScanFetcher 가 이
-    // 값으로 검증 이름을 맞춘다. 서버 인증서를 현재 주소로 재발급했다면 ""로
-    // 바꾸면 host 검증으로 돌아간다.
-    mqttOut["server_name"] = QLatin1String(kCertHostName);
-    if (mqttOut["host"].toString().isEmpty()) {
-        *err = QString::fromUtf8("서버 응답에 mqtt.host 가 없습니다.");
-        return false;
-    }
-    if (!writeText(cfgDir + QStringLiteral("/mqtt.json"),
-                   QString::fromUtf8(QJsonDocument(mqttOut).toJson(QJsonDocument::Indented)), false)) {
-        *err = QString::fromUtf8("mqtt.json 을 쓰지 못했습니다.");
-        return false;
     }
 
     // 카메라: 사용자가 IP 를 입력했으면 그것이 이긴다.
@@ -308,6 +319,25 @@ bool EnrollDialog::installBundle(const QJsonObject &o, QString *err) {
             *err = QString::fromUtf8("cameras.json 을 쓰지 못했습니다.");
             return false;
         }
+    }
+
+    // 마지막: configReady() 가 보는 파일. 여기까지 왔다는 건 인증서와 카메라
+    // 설정이 모두 자리에 있다는 뜻이라, 이 파일이 생기는 순간 = 발급 완료다.
+    //
+    // cert_dir 은 상대경로로 둔다 — resolveConfigPath 가 사용자 데이터 디렉터리
+    // 기준으로 찾아준다. 절대경로로 굳히면 홈 경로가 바뀔 때 깨진다.
+    QJsonObject mqttOut;
+    mqttOut["host"]     = mqtt.value(QStringLiteral("host")).toString();
+    mqttOut["port"]     = mqtt.value(QStringLiteral("port")).toInt(8883);
+    mqttOut["cert_dir"] = QStringLiteral("certs");
+    // 스캔 파일(8443)도 같은 이유로 호스트명 검증이 걸린다 — ScanFetcher 가 이
+    // 값으로 검증 이름을 맞춘다. 서버 인증서를 현재 주소로 재발급했다면 ""로
+    // 바꾸면 host 검증으로 돌아간다.
+    mqttOut["server_name"] = QLatin1String(kCertHostName);
+    if (!writeText(cfgDir + QStringLiteral("/mqtt.json"),
+                   QString::fromUtf8(QJsonDocument(mqttOut).toJson(QJsonDocument::Indented)), false)) {
+        *err = QString::fromUtf8("mqtt.json 을 쓰지 못했습니다.");
+        return false;
     }
     return true;
 }

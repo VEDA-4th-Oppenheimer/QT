@@ -46,6 +46,8 @@ private:
     bool ensureConfigured();
     // 사용자 데이터(인증서·설정)를 지우고 앱을 종료한다. 다음 실행 때 마법사가 뜬다.
     void logout();
+    // 모달 다이얼로그의 부모 창(전체화면으로 빠진 TOP-VIEW 창 대응).
+    QWidget *modalParent();
     // 등록 후에도 카메라를 바꿀 수 있게 한다. 재등록을 시키면 인증서까지 다시
     // 받아야 해서 과하다 — 카메라는 인증서와 무관하다.
     void editCameraSettings();
