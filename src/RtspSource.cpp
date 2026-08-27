@@ -58,6 +58,17 @@ void RtspSource::reconnectAll() {
     applyChannels(cfg, QString::fromUtf8("CCTV 재연결"));
 }
 
+void RtspSource::setSoloChannel(int channel) {
+    m_currentSoloChannel = channel;
+    for (auto it = m_decoders.begin(); it != m_decoders.end(); ++it) {
+        const int ch = it.key();
+        auto *dec = it.value();
+        if (dec == nullptr) continue;
+        const bool full = (channel > 0 && ch == channel);
+        dec->setFullResolution(full);
+    }
+}
+
 void RtspSource::loadConfigAndStart(const QString &path) {
     SpatialProjector::instance().loadProfiles(resolveConfigPath("config/calibration_profiles.json"));
 
@@ -104,6 +115,7 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         connect(dec, &RtspDecoder::statusChanged, this, &RtspSource::channelStatusChanged);
         connect(dec, &RtspDecoder::logLine, this, &RtspSource::logLine);
         connect(dec, &RtspDecoder::gaveUp, this, [this](int c) { m_gaveUp.insert(c); });
+        dec->setFullResolution(m_currentSoloChannel > 0 && ch == m_currentSoloChannel);
         m_decoders.insert(ch, dec);
         dec->start();
     }

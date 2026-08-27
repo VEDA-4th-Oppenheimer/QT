@@ -499,6 +499,9 @@ void MainWindow::setSoloChannel(int channel) {
         tile->setVisible(channel == 0 || solo);
         tile->setSolo(solo);
     }
+    if (m_video != nullptr) {
+        m_video->setSoloChannel(channel);
+    }
 }
 
 void MainWindow::toggleTopViewFullScreen() {

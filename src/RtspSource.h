@@ -44,6 +44,9 @@ public slots:
     // 자동 재시도를 멈추므로, 카메라를 나중에 켠 경우 사용자가 이걸로 다시 붙인다.
     void reconnectAll();
 
+    // 1채널 확대(solo > 0) 시 해당 채널 디코더를 원본 해상도로 전환하고, 4분할(0) 시 다운샘플링 복귀
+    void setSoloChannel(int channel);
+
 signals:
     void frameReceived(int channel, const QImage &frame);
     void objectsUpdated(const QVector<SpatialObject> &objects);
@@ -70,4 +73,5 @@ private:
     QSet<int>                m_gaveUp;    // 재시도를 포기해 스레드가 끝난 채널
     QTimer                  *m_flushTimer = nullptr;
     qint64                   m_cacheTtlMs = kDefaultTtlMs;
+    int                      m_currentSoloChannel = 0;
 };

@@ -21,6 +21,8 @@ public:
     ~RtspDecoder() override;
 
     void stop();   // run() 루프를 정리하고 스레드를 종료시킨다
+    void setFullResolution(bool full);
+    bool isFullResolution() const { return m_fullResolution.load(); }
 
 signals:
     void frameReady(int channel, const QImage &frame);
@@ -52,4 +54,5 @@ private:
     QString m_url;
     int     m_attempt = 0;
     std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_fullResolution{false};
 };

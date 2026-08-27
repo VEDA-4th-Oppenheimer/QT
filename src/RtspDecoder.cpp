@@ -59,6 +59,10 @@ RtspDecoder::~RtspDecoder() {
     wait(3000);
 }
 
+void RtspDecoder::setFullResolution(bool full) {
+    m_fullResolution.store(full);
+}
+
 void RtspDecoder::stop() { m_stop.store(true); }
 
 #ifdef USE_FFMPEG
@@ -131,8 +135,9 @@ bool RtspDecoder::openStream() {
         return false;
     }
 
-    m_dstW = qMin(kMaxDecodeWidth, m_codec->width);
-    m_dstH = m_codec->width > 0 ? m_dstW * m_codec->height / m_codec->width : m_codec->height;
+    const bool initFull = m_fullResolution.load();
+    m_dstW = initFull ? m_codec->width : qMin(kMaxDecodeWidth, m_codec->width);
+    m_dstH = initFull ? m_codec->height : (m_codec->width > 0 ? m_dstW * m_codec->height / m_codec->width : m_codec->height);
     m_sws = sws_getContext(m_codec->width, m_codec->height, m_codec->pix_fmt,
                            m_dstW, m_dstH, AV_PIX_FMT_RGB24,
                            SWS_BILINEAR, nullptr, nullptr, nullptr);
@@ -226,6 +231,30 @@ void RtspDecoder::run() {
                 ret = avcodec_send_packet(m_codec, pkt);
                 if (ret >= 0) {
                     while (avcodec_receive_frame(m_codec, frame) >= 0) {
+                        // 해상도 모드(1채널 확대 시 원본 vs 4분할 시 다운샘플) 동적 전환 검사
+                        const bool reqFull = m_fullResolution.load();
+                        const int targetW = reqFull ? m_codec->width : qMin(kMaxDecodeWidth, m_codec->width);
+                        const int targetH = reqFull ? m_codec->height : (m_codec->width > 0 ? targetW * m_codec->height / m_codec->width : m_codec->height);
+
+                        if (m_dstW != targetW || m_dstH != targetH || !m_sws) {
+                            if (m_sws) { sws_freeContext(m_sws); m_sws = nullptr; }
+                            m_dstW = targetW;
+                            m_dstH = targetH;
+                            m_sws = sws_getContext(m_codec->width, m_codec->height, m_codec->pix_fmt,
+                                                   m_dstW, m_dstH, AV_PIX_FMT_RGB24,
+                                                   SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+                            av_free(buffer);
+                            const int newBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
+                            buffer = static_cast<uint8_t *>(av_malloc(newBytes));
+                            av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer,
+                                                 AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
+
+                            emit logLine("RTSP", QString("CH%1 해상도 전환 — %2x%3 (%4)")
+                                                     .arg(m_channel).arg(m_dstW).arg(m_dstH)
+                                                     .arg(reqFull ? QStringLiteral("원본 해상도") : QStringLiteral("다운샘플링")));
+                        }
+
                         sws_scale(m_sws, frame->data, frame->linesize, 0, m_codec->height,
                                   rgbFrame->data, rgbFrame->linesize);
 
