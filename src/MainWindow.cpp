@@ -431,10 +431,17 @@ QWidget *MainWindow::buildDashboardTab() {
     for (int i = 0; i < 4; ++i) {
         m_tiles[i] = new CameraTile(defs[i], camPane);
         grid->addWidget(m_tiles[i], i / 2, i % 2);
+        // 타일을 누르면 그 채널만 남긴다. 같은 채널을 다시 누르면 4분할로.
+        connect(m_tiles[i], &CameraTile::channelClicked, this, [this](int ch) {
+            setSoloChannel(m_soloChannel == ch ? 0 : ch);
+        });
     }
     // 2x2 그리드가 이보다 좁아지면 타일 안 라벨이 겹친다. 스플리터가 이 값
     // 아래로는 못 끌게 막아준다(TOP-VIEW 쪽은 자기 minimumWidth 로 버틴다).
     camPane->setMinimumWidth(520);
+
+    // 테마 전환 등으로 타일을 다시 만든 직후에도 보고 있던 채널을 되살린다.
+    setSoloChannel(m_soloChannel);
 
     // 시그널 연결은 rebuildUi() 가 한곳에서 한다 — 여기서 또 connect 하면
     // 같은 슬롯이 두 번 불려서 더블클릭 한 번에 detach 후 즉시 attach 가 된다.
@@ -460,17 +467,38 @@ QWidget *MainWindow::buildDashboardTab() {
     m_dashSplitter->setStretchFactor(1, 0);
     l->addWidget(m_dashSplitter);
 
-    if (m_splitterState.isEmpty()) {
-        m_splitterState = QSettings().value(QStringLiteral("dashboard/splitter")).toByteArray();
-    }
-    if (!m_dashSplitter->restoreState(m_splitterState)) {
-        m_dashSplitter->setSizes({760, 430});   // 종전 고정 폭과 같은 초기 비율
+    if (!m_dashInitialized) {
+        // 켜자마자는 TOP-VIEW 를 자기 하한까지 접고 남는 폭을 전부 CCTV 에 준다.
+        // stretchFactor 가 (CCTV 1, TOP-VIEW 0) 이라, 첫 인자를 넉넉히 주면 실제
+        // 창 폭에 맞춰질 때 남는 픽셀이 전부 좌측으로 간다.
+        // 지난 실행에서 끌어둔 비율은 일부러 안 읽는다 — 시작 화면은 항상 영상이
+        // 제일 큰 상태로 고정한다(그래서 QSettings 저장도 하지 않는다). 세션 중에
+        // 끈 비율은 아래 splitterMoved 가 m_splitterState 에 담아, 테마 전환이나
+        // TOP-VIEW 분리/복귀로 위젯을 다시 만들어도 그대로 되살린다.
+        m_dashInitialized = true;
+        const int topMin = qMax(m_topView->minimumWidth(), m_topView->minimumSizeHint().width());
+        m_dashSplitter->setSizes({width(), topMin});
+        m_splitterState = m_dashSplitter->saveState();
+    } else if (!m_dashSplitter->restoreState(m_splitterState)) {
+        m_dashSplitter->setSizes({760, 430});
     }
     connect(m_dashSplitter, &QSplitter::splitterMoved, this, [this](int, int) {
         m_splitterState = m_dashSplitter->saveState();
-        QSettings().setValue(QStringLiteral("dashboard/splitter"), m_splitterState);
     });
     return page;
+}
+
+// 4분할 그리드에서 한 채널만 크게 본다. 숨긴 타일이 든 행/열은 QGridLayout 이
+// 0 폭으로 접기 때문에, 남은 타일 하나가 자연히 좌측 칸 전체를 채운다.
+// 스트림은 그대로 둔다 — 감춘 채널을 끊으면 되돌릴 때 다시 붙느라 몇 초 검다.
+void MainWindow::setSoloChannel(int channel) {
+    m_soloChannel = channel;
+    for (CameraTile *tile : m_tiles) {
+        if (tile == nullptr) continue;
+        const bool solo = (channel != 0 && tile->channel() == channel);
+        tile->setVisible(channel == 0 || solo);
+        tile->setSolo(solo);
+    }
 }
 
 void MainWindow::toggleTopViewFullScreen() {

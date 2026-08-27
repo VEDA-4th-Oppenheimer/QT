@@ -20,7 +20,16 @@ public:
     void setScanResult(const ScanResult &r);
     void appendLog(const QString &tag, const QString &msg);
 
+protected:
+    void resizeEvent(QResizeEvent *ev) override;
+
 private:
+    // pcd/json 은 전체 경로라 360 px 패널에서 그냥 잘린다. 폭에 맞춰 가운데를
+    // 접어 보여주고(앞의 디렉터리와 뒤의 파일명은 남는다), 원문은 툴팁에 둔다.
+    void updateElidedPaths();
+
+    QString m_pcdRaw, m_jsonRaw;
+
     QLabel *m_stepBadge[4];
     QLabel *m_stepState[4];
     QPlainTextEdit *m_log;

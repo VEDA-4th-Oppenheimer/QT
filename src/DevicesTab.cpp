@@ -9,14 +9,14 @@
 #include <QHeaderView>
 
 namespace {
-struct StaticDevice { const char *name, *desc, *value; };
-const StaticDevice kStatic[2] = {
-    {"STM32 + DRV8825", "Pan/Tilt 2축 · 카메라와 동일 천장 스택 마운트", "IDLE · pan 0..180° / 1.0°step"},
-    {"RPi 4B",           "통합 데몬(C, epoll) + Mosquitto 브로커",       "RUN · 42.3 °C"},
-};
+// 값 칸이 비는 장비들. 예전에는 "IDLE · pan 0..180° / 1.0°step", "RUN · 42.3 °C"
+// 가 박혀 있었는데 둘 다 시안용으로 지어낸 상수였다 — 실제 팬 각도도, 라즈베리파이
+// 온도도 어디서도 안 들어온다. 화면에 있으면 실측으로 읽히므로 뺀다.
+const char *const kStatic[2] = {"STM32 + DRV8825", "RPi 4B"};
 
-QFrame *deviceCard(QWidget *parent, const QString &name, const QString &desc,
-                    QLabel **dot, QLabel **value) {
+// 카드에는 이름·상태점·현재 값만 둔다. 예전에 있던 한 줄 설명("Pan/Tilt 2축 …")은
+// 장비를 아는 사람에겐 군더더기고, 모르는 사람에겐 이 화면에서 할 일이 없다.
+QFrame *deviceCard(QWidget *parent, const QString &name, QLabel **dot, QLabel **value) {
     auto *card = new QFrame(parent);
     card->setObjectName("card");
     auto *l = new QVBoxLayout(card);
@@ -33,11 +33,6 @@ QFrame *deviceCard(QWidget *parent, const QString &name, const QString &desc,
     top->addStretch(1);
     l->addLayout(top);
 
-    auto *descLabel = new QLabel(desc, card);
-    descLabel->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextMuted.name()));
-    descLabel->setWordWrap(true);
-    l->addWidget(descLabel);
-
     *value = new QLabel(card);
     (*value)->setStyleSheet(Theme::mono(12) + QString("color:%1;").arg(Theme::Text3.name()));
     l->addWidget(*value);
@@ -53,15 +48,11 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     auto *cards = new QGridLayout;
     cards->setSpacing(10);
 
-    cards->addWidget(deviceCard(this, "IMU", QString::fromUtf8("수평 게이트 판정 (/dev/imu, I²C)"),
-                                 &m_mpuDot, &m_mpuValue), 0, 0);
-    cards->addWidget(deviceCard(this, "TOFSense-F2D", QString::fromUtf8("1D LiDAR · pan-tilt 격자 스캔 (100 Hz)"),
-                                 &m_tofDot, &m_tofValue), 0, 1);
+    cards->addWidget(deviceCard(this, "IMU", &m_mpuDot, &m_mpuValue), 0, 0);
+    cards->addWidget(deviceCard(this, "TOFSense-F2D", &m_tofDot, &m_tofValue), 0, 1);
     QLabel *dummyDot; QLabel *dummyValue;
     for (int i = 0; i < 2; ++i) {
-        auto *card = deviceCard(this, kStatic[i].name, kStatic[i].desc, &dummyDot, &dummyValue);
-        dummyValue->setText(kStatic[i].value);
-        cards->addWidget(card, 0, 2 + i);
+        cards->addWidget(deviceCard(this, kStatic[i], &dummyDot, &dummyValue), 0, 2 + i);
     }
     root->addLayout(cards);
 
@@ -77,27 +68,27 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
 
     // 영상은 MQTT가 아니라 RTSP 직결(RtspSource, 대시보드 타일 참고). 아래는
     // RPi develop 브랜치 실구현 기준 토픽(kit_id 세그먼트 없음 — Models.h 참고).
-    struct Row { const char *topic, *rate, *desc, *state; };
+    // DESC 열은 뺐다 — 토픽 이름과 TX/RX 만으로 읽히고, 산문 설명은 폭만 먹었다.
+    struct Row { const char *topic, *rate, *state; };
     const Row rows[9] = {
-        {"adts/cmd/scan",       "on-demand", "Qt -> 데몬: 스캔 시작 (retain 금지)",     "TX"},
-        {"adts/cmd/stop",       "on-demand", "Qt -> 데몬: 스캔 중단",                    "TX"},
-        {"adts/cmd/home",       "on-demand", "Qt -> 데몬: 스캔 없이 홈만 수행 (IDLE 에서만)", "TX"},
-        {"adts/cmd/disarm",     "on-demand", "Qt -> 데몬: 안전정지",                     "TX"},
-        {"adts/cmd/rearm",      "on-demand", "Qt -> 데몬: DISARM 해제 (계약 외 확장)",   "TX"},
-        {"adts/state/daemon",   "5s + 변경시","데몬 -> Qt: FSM·링크·IMU (retained, LWT)", "RX"},
-        {"adts/state/scan",     "on-demand", "데몬 -> Qt: 스캔 결과 파일 경로 (retained)","RX"},
-        {"adts/event/progress", "~2 Hz",     "데몬 -> Qt: 진행률 (QoS0, 유실 가정)",      "RX"},
-        {"adts/event/error",    "on-demand", "데몬 -> Qt: 오류 코드/메시지",             "RX"},
+        {"adts/cmd/scan",       "on-demand",  "TX"},
+        {"adts/cmd/stop",       "on-demand",  "TX"},
+        {"adts/cmd/home",       "on-demand",  "TX"},
+        {"adts/cmd/disarm",     "on-demand",  "TX"},
+        {"adts/cmd/rearm",      "on-demand",  "TX"},
+        {"adts/state/daemon",   "5s + 변경시","RX"},
+        {"adts/state/scan",     "on-demand",  "RX"},
+        {"adts/event/progress", "~2 Hz",      "RX"},
+        {"adts/event/error",    "on-demand",  "RX"},
     };
 
     constexpr int kRowCount = int(sizeof(rows) / sizeof(rows[0]));
-    m_table = new QTableWidget(kRowCount, 4, this);
-    m_table->setHorizontalHeaderLabels({"TOPIC", "RATE", "DESC", "STATE"});
+    m_table = new QTableWidget(kRowCount, 3, this);
+    m_table->setHorizontalHeaderLabels({"TOPIC", "RATE", "STATE"});
     m_table->verticalHeader()->hide();
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->setColumnWidth(0, 280);
-    m_table->setColumnWidth(1, 90);
-    m_table->setColumnWidth(2, 420);
+    m_table->setColumnWidth(1, 120);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionMode(QAbstractItemView::NoSelection);
 
@@ -110,10 +101,9 @@ DevicesTab::DevicesTab(QWidget *parent) : QWidget(parent) {
     for (int r = 0; r < kRowCount; ++r) {
         m_table->setItem(r, 0, new QTableWidgetItem(QString::fromUtf8(rows[r].topic)));
         m_table->setItem(r, 1, new QTableWidgetItem(QString::fromUtf8(rows[r].rate)));
-        m_table->setItem(r, 2, new QTableWidgetItem(QString::fromUtf8(rows[r].desc)));
         auto *stateItem = new QTableWidgetItem(QString::fromUtf8(rows[r].state));
         stateItem->setForeground(stateColor(rows[r].state));
-        m_table->setItem(r, 3, stateItem);
+        m_table->setItem(r, 2, stateItem);
     }
     root->addWidget(m_table, 1);
 

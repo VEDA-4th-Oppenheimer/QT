@@ -6,6 +6,7 @@
 #include <QPainter>
 #include <QTimer>
 #include <QDateTime>
+#include <QMouseEvent>
 
 namespace {
 class VideoView : public QWidget {
@@ -78,8 +79,17 @@ CameraTile::CameraTile(const ChannelState &state, QWidget *parent)
     m_name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_status = new QLabel(head);
 
+    // 평소엔 숨어 있다가 1채널로 키웠을 때만 뜬다 — 지금 보고 있는 게 4분할이
+    // 아니라는 걸 알려주고, 되돌리는 법도 같이 적어 둔다.
+    m_solo = new QLabel(QString::fromUtf8("1채널"), head);
+    m_solo->setStyleSheet(Theme::mono(9, 700) + QString(
+        "color:%1;background:%2;border-radius:3px;padding:1px 5px;letter-spacing:1px;")
+        .arg(Theme::AccentBright.name(), Theme::AccentBg.name()));
+    m_solo->hide();
+
     hl->addWidget(m_noLabel);
     hl->addWidget(m_name, 1);
+    hl->addWidget(m_solo);
     hl->addWidget(m_status);
 
     auto *view = new VideoView(this);
@@ -99,8 +109,27 @@ CameraTile::CameraTile(const ChannelState &state, QWidget *parent)
     });
     clock->start(1000);
 
+    setCursor(Qt::PointingHandCursor);
+    setToolTip(QString::fromUtf8("클릭하면 CH%1 만 크게 봅니다 (다시 클릭하면 4분할)").arg(state.no));
+
     setOnline(state.online);
     setFps(state.fps);
+}
+
+void CameraTile::setSolo(bool solo) {
+    if (m_solo != nullptr) m_solo->setVisible(solo);
+    setToolTip(solo
+        ? QString::fromUtf8("클릭하면 4분할로 돌아갑니다")
+        : QString::fromUtf8("클릭하면 CH%1 만 크게 봅니다 (다시 클릭하면 4분할)").arg(m_state.no));
+}
+
+void CameraTile::mouseReleaseEvent(QMouseEvent *ev) {
+    // 누른 자리에서 뗀 것만 클릭으로 친다 — 스플리터를 끌다 손을 뗀 게 채널
+    // 전환으로 오인되지 않게.
+    if (ev->button() == Qt::LeftButton && rect().contains(ev->pos())) {
+        emit channelClicked(m_state.no);
+    }
+    QFrame::mouseReleaseEvent(ev);
 }
 
 void CameraTile::setFrame(const QImage &img) {

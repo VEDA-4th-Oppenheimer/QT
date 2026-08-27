@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include <QPainter>
 #include <QPainterPath>
+#include <QFontMetrics>
 #include <cmath>
 
 namespace {
@@ -203,7 +204,14 @@ void TopViewWidget::paintEvent(QPaintEvent *) {
         QFontMetrics fm(labelFont);
         const int tw = fm.horizontalAdvance(label) + 8;
         const int th = fm.height() + 2;
-        const QRectF tagRect(c.x() + 12, c.y() - th / 2.0, tw, th);
+        // 기본은 마커 오른쪽. 그대로 두면 위젯 오른쪽 끝에 붙은 객체의 라벨이
+        // 잘려서 채널·거리를 못 읽는다 — 넘칠 때는 왼쪽으로 뒤집고, 그래도
+        // 모자라면 가장자리 안쪽으로 밀어 넣는다. 위아래도 같은 이유로 가둔다.
+        double tx = c.x() + 12;
+        if (tx + tw > width() - 2) tx = c.x() - 12 - tw;
+        tx = qBound(2.0, tx, qMax(2.0, width() - tw - 2.0));
+        const double ty = qBound(2.0, c.y() - th / 2.0, qMax(2.0, height() - th - 2.0));
+        const QRectF tagRect(tx, ty, tw, th);
 
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(18, 20, 24, 200));

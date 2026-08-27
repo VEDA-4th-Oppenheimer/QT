@@ -8,15 +8,14 @@
 #include <QProgressBar>
 #include <QDateTime>
 #include <QLocale>
+#include <QResizeEvent>
+#include <QFontMetrics>
 
 namespace {
 // 계약이 실제로 규정하는 FSM(§5)만 반영한다 — 추측성 알고리즘 단계는 넣지 않는다.
-const char *kSteps[4][2] = {
-    {"1 · IDLE",     "대기 — cmd/scan 수신 시 SCANNING 진입 (수평 게이트 통과 필요)"},
-    {"2 · SCANNING", "STM32 연속 pan sweep, event/progress ~2Hz 수신"},
-    {"3 · EXPORT",   "포인트클라우드 파일 마감, state/scan 발행"},
-    {"4 · IDLE",     "세션 종료 — 다음 cmd/scan 대기"},
-};
+// 단계마다 붙어 있던 한 줄 설명("STM32 연속 pan sweep, …")은 뺐다. 지금 어느
+// 단계인지는 옆의 ACTIVE/DONE 배지가 말해주고, 설명은 계약 문서에 있다.
+const char *const kSteps[4] = {"1 · IDLE", "2 · SCANNING", "3 · EXPORT", "4 · IDLE"};
 
 QLabel *statRow(QWidget *parent, QVBoxLayout *into, const QString &label) {
     auto *row = new QHBoxLayout;
@@ -43,10 +42,7 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
 
     auto *pipeHead = new QLabel("SCAN SESSION", this);
     pipeHead->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
-    auto *pipeSub = new QLabel(QString::fromUtf8("MQTT_INTERFACE_CONTRACT.md §5 상태 흐름"), this);
-    pipeSub->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextDim.name()));
     left->addWidget(pipeHead);
-    left->addWidget(pipeSub);
     left->addSpacing(4);
 
     for (int i = 0; i < 4; ++i) {
@@ -60,18 +56,15 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
         m_stepBadge[i]->setFixedSize(16, 16);
         m_stepBadge[i]->setAlignment(Qt::AlignCenter);
 
-        auto *id = new QLabel(kSteps[i][0], row);
-        id->setFixedWidth(120);
+        auto *id = new QLabel(kSteps[i], row);
         id->setStyleSheet(Theme::mono(11, 500) + QString("color:%1;").arg(Theme::Text2.name()));
-        auto *desc = new QLabel(kSteps[i][1], row);
-        desc->setStyleSheet(QString("color:%1;").arg(Theme::TextDim.name()));
 
         m_stepState[i] = new QLabel("—", row);
         m_stepState[i]->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;").arg(Theme::TextFaint.name()));
 
         rl->addWidget(m_stepBadge[i]);
         rl->addWidget(id);
-        rl->addWidget(desc, 1);
+        rl->addStretch(1);
         rl->addWidget(m_stepState[i]);
         left->addWidget(row);
     }
@@ -119,7 +112,7 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
     auto *rl2 = new QVBoxLayout(resultPanel);
     rl2->setContentsMargins(11, 10, 11, 10);
     rl2->setSpacing(6);
-    auto *rTitle = new QLabel("LAST SCAN RESULT  (state/scan)", resultPanel);
+    auto *rTitle = new QLabel("LAST SCAN RESULT", resultPanel);
     rTitle->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     rl2->addWidget(rTitle);
     auto *resultStats = new QVBoxLayout;
@@ -153,6 +146,7 @@ CalibrationTab::CalibrationTab(QWidget *parent) : QWidget(parent) {
 
     setDaemonState({});
     setScanProgress({});
+    updateElidedPaths();
 }
 
 void CalibrationTab::setDaemonState(const DaemonState &s) {
@@ -205,7 +199,7 @@ void CalibrationTab::setScanResult(const ScanResult &r) {
     m_okValue->setStyleSheet(Theme::mono(11) + QString("color:%1;")
                                   .arg((r.ok ? Theme::Ok : Theme::DangerText).name()));
     m_stmReportedValue->setText(r.stmReported > 0 ? QLocale().toString(r.stmReported) : "—");
-    m_pcdValue->setText(r.pcdPath.isEmpty() ? "—" : r.pcdPath);
+    m_pcdRaw = r.pcdPath;
 
     // 계약엔 있지만 실구현이 아직 안 보내는 필드 — 기본값(빈 문자열/0)이면 "—".
     m_sessionValue->setText(r.sessionId.isEmpty() ? "—" : r.sessionId);
@@ -213,7 +207,32 @@ void CalibrationTab::setScanResult(const ScanResult &r) {
     m_rowsColsValue->setText((r.rows > 0 && r.columns > 0)
                                   ? QString("%1 × %2").arg(r.rows).arg(r.columns) : "—");
     m_durationValue->setText(r.durationS > 0.0 ? QString("%1 s").arg(r.durationS, 0, 'f', 1) : "—");
-    m_jsonValue->setText(r.jsonPath.isEmpty() ? "—" : r.jsonPath);
+    m_jsonRaw = r.jsonPath;
+    updateElidedPaths();
+}
+
+// 경로 라벨은 자기 폭 안으로 접는다. QLabel 은 넘치면 말없이 잘라내서, 파일명
+// 끝(.pcd / .json)이 사라진 채로 보이는 게 제일 나빴다 — 가운데를 "…" 로 접으면
+// 어느 디렉터리의 무슨 파일인지는 남는다. 전체 경로는 툴팁으로 확인한다.
+void CalibrationTab::updateElidedPaths() {
+    const auto apply = [](QLabel *label, const QString &raw) {
+        if (label == nullptr) return;
+        if (raw.isEmpty()) {
+            label->setText(QStringLiteral("—"));
+            label->setToolTip(QString());
+            return;
+        }
+        const int avail = label->width() > 20 ? label->width() : 240;
+        label->setText(QFontMetrics(label->font()).elidedText(raw, Qt::ElideMiddle, avail));
+        label->setToolTip(raw);
+    };
+    apply(m_pcdValue, m_pcdRaw);
+    apply(m_jsonValue, m_jsonRaw);
+}
+
+void CalibrationTab::resizeEvent(QResizeEvent *ev) {
+    QWidget::resizeEvent(ev);
+    updateElidedPaths();
 }
 
 void CalibrationTab::appendLog(const QString &tag, const QString &msg) {

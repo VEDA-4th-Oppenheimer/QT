@@ -46,7 +46,8 @@ signals:
 private:
     QCheckBox *m_demo = nullptr;
     QCheckBox *m_manualCalib = nullptr;
-    QLabel *m_theme = nullptr;
+    QPushButton *m_themeBlack = nullptr;
+    QPushButton *m_themeWhite = nullptr;
     QLabel *m_camera = nullptr;
     QLabel *m_height = nullptr;
     QLabel *m_topView = nullptr;

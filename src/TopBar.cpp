@@ -57,11 +57,9 @@ TopBar::TopBar(QWidget *parent) : QFrame(parent) {
 
     auto *title = new QLabel(QString::fromUtf8("SPATIAL·VMS"), this);
     title->setStyleSheet(Theme::mono(14, 700) + QString("letter-spacing:2px;color:%1;").arg(Theme::Text.name()));
-    auto *sub = new QLabel("v1.0 / ADTS SCANNER KIT", this);
-    sub->setStyleSheet(Theme::mono(10) + QString("letter-spacing:2px;color:%1;").arg(Theme::TextFaint.name()));
-
+    // 제목 옆 부제("v1.0 / ADTS SCANNER KIT")는 뺐다 — 버전과 킷 이름은 이 바에서
+    // 매일 볼 정보가 아니고, 상태 칩(MQTT/IMU/STATE)이 들어갈 폭만 잡아먹었다.
     l->addWidget(title);
-    l->addWidget(sub);
     l->addWidget(chip(this, "MQTT",  &m_mqtt, &m_mqttDot));
     l->addWidget(chip(this, "IMU",   &m_imu));
     l->addWidget(chip(this, "STATE", &m_state));

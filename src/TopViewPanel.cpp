@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QFrame>
 #include <QMouseEvent>
+#include <QSizePolicy>
 
 namespace {
 QLabel *legendDot(QWidget *parent, const QColor &c) {
@@ -43,7 +44,7 @@ QVBoxLayout *statCell(QWidget *parent, const QString &label, QLabel **value) {
 
 TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     setObjectName("panel");
-    setMinimumWidth(360);
+    setMinimumWidth(kMinWidth);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -59,11 +60,9 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
 
     auto *ht = new QLabel("TOP-VIEW", head);
     ht->setStyleSheet(Theme::mono(10, 700) + QString("color:%1;letter-spacing:2px;").arg(Theme::Accent.name()));
-    auto *hs = new QLabel(QString::fromUtf8("천장 중앙 기준"), head);
-    hs->setStyleSheet(QString("color:%1;font-size:11px;").arg(Theme::TextMuted.name()));
+    // 부제("천장 중앙 기준")는 뺐다 — 킷이 천장 중앙에 있다는 건 지도의 원점
+    // 마커가 이미 말해주고, 헤더 폭만 잡아먹어 패널을 그만큼 못 줄이게 했다.
     hl->addWidget(ht);
-    hl->addSpacing(6);
-    hl->addWidget(hs);
     hl->addStretch(1);
 
     const QString btnCss = QString(
@@ -77,7 +76,9 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
         .arg(Theme::AccentBg.name(), Theme::AccentBright.name(), Theme::Accent.name());
 
     // 1. [📁 스캔 파일] 버튼 (로컬 파일 열기 / 서버 스캔 목록 선택 메뉴)
-    m_btnScan = new QPushButton(QString::fromUtf8("📁 스캔 파일 ▾"), head);
+    // 라벨 뒤에 붙이던 드롭다운 표시 "▾" 는 뺐다 — 10px 에서는 삼각형이 안 보이고
+    // 그냥 점 하나가 붙은 것처럼 읽혔다. 누르면 메뉴가 뜨는 건 어차피 알 수 있다.
+    m_btnScan = new QPushButton(QString::fromUtf8("📁 스캔 파일"), head);
     m_btnScan->setFixedHeight(22);
     m_btnScan->setCursor(Qt::PointingHandCursor);
     m_btnScan->setStyleSheet(btnCss);
@@ -97,8 +98,8 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     m_btnScan->setMenu(scanMenu);
     hl->addWidget(m_btnScan);
 
-    // 2. [📐 캘리브레이션 RT ▾] 버튼 (로컬 파일 열기 / CCTV 카메라에서 가져오기 메뉴)
-    m_btnCalib = new QPushButton(QString::fromUtf8("📐 캘리브레이션 RT ▾"), head);
+    // 2. [📐 캘리브레이션 RT] 버튼 (로컬 파일 열기 / CCTV 카메라에서 가져오기 메뉴)
+    m_btnCalib = new QPushButton(QString::fromUtf8("📐 캘리브레이션 RT"), head);
     m_btnCalib->setFixedHeight(22);
     m_btnCalib->setCursor(Qt::PointingHandCursor);
     m_btnCalib->setStyleSheet(btnCss);
@@ -140,7 +141,10 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     // 4. [⛶ 전체화면] 토글 버튼
     m_btnFull = new QPushButton(QString::fromUtf8("⛶"), head);
     m_btnFull->setFixedHeight(22);
-    m_btnFull->setFixedWidth(28);
+    // 고정폭을 주면 detached 상태 라벨("⛶ 복원")이 그대로 잘린다. 하한만 두고
+    // 글자 길이에 따라 늘어나게 한다.
+    m_btnFull->setMinimumWidth(28);
+    m_btnFull->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     m_btnFull->setCursor(Qt::PointingHandCursor);
     m_btnFull->setStyleSheet(btnCss);
     m_btnFull->setToolTip(QString::fromUtf8("별도 창에서 전체화면으로 보기 (지도 더블클릭도 같은 동작)"));
@@ -198,10 +202,12 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     // 2행: 점군 요약 (점 수, 미반사, 반경)
     m_cloudInfo = new QLabel(legend);
     mono10(m_cloudInfo);
+    m_cloudInfo->setWordWrap(true);
     legendV->addWidget(m_cloudInfo);
 
     m_objectInfo = new QLabel(legend);
     mono10(m_objectInfo);
+    m_objectInfo->setWordWrap(true);
     legendV->addWidget(m_objectInfo);
 
     // ── 하단 통계 바
@@ -217,6 +223,7 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     sTitle->setStyleSheet(Theme::mono(11, 700) + QString("color:%1;letter-spacing:1px;").arg(Theme::Accent.name()));
     m_scanSummary = new QLabel(stats);
     m_scanSummary->setStyleSheet(Theme::mono(11) + QString("color:%1;").arg(Theme::TextDim2.name()));
+    m_scanSummary->setWordWrap(true);
     summary->addWidget(sTitle);
     summary->addWidget(m_scanSummary, 1);
     sv->addLayout(summary);
@@ -247,6 +254,14 @@ TopViewPanel::TopViewPanel(QWidget *parent) : QFrame(parent) {
     setDaemonState({});
     setScanProgress({});
     setObjects({});
+
+    // 헤더 라벨은 폭에 따라 바뀌지 않는다 — 스플리터를 끌 때마다 버튼 글자가
+    // 바뀌면 어디를 누르려던 건지 매번 다시 읽어야 한다. 대신 헤더가 요구하는
+    // 최소 폭을 그대로 하한으로 쓴다(폰트/플랫폼마다 글자 폭이 달라서 상수로
+    // 박으면 어딘가에서는 결국 잘린다). sizeHint 가 아니라 minimumSizeHint 라,
+    // 위에서 Ignored 로 둔 부제 폭만큼은 더 줄일 수 있다. 버튼은 여기에 자기
+    // 전체 라벨 폭을 그대로 싣기 때문에 어떤 폭에서도 잘리지 않는다.
+    setMinimumWidth(qMax(kMinWidth, head->minimumSizeHint().width()));
 }
 
 bool TopViewPanel::eventFilter(QObject *watched, QEvent *ev) {

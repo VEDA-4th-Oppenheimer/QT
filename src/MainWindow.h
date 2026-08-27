@@ -56,6 +56,8 @@ private:
     // 하지 않고 위젯 자체를 옮긴다 — 두 벌이면 스캔 점군·IMU 배선을 이중으로
     // 유지해야 하고, 어느 쪽이 최신인지 헷갈린다.
     void toggleTopViewFullScreen();
+    // 0 이면 4분할, 1~4 면 그 채널 타일만 남기고 나머지를 감춘다.
+    void setSoloChannel(int channel);
     void detachTopView();
     void attachTopView();
     // 스캔 완료(state/scan) 시 .pcd 를 받아 Top-View 에 깔기까지의 배선.
@@ -86,9 +88,15 @@ private:
     // 바꾸고, 그 비율은 QSettings 에 남겨 재실행·테마 전환에도 유지된다.
     QSplitter *m_dashSplitter = nullptr;
     QByteArray m_splitterState;
+    // 이 프로세스에서 대시보드를 처음 만드는지. 첫 회에만 TOP-VIEW 를 하한으로
+    // 접는다 — 테마 전환으로 다시 만들 때까지 초기화하면 끌어둔 비율이 날아간다.
+    bool m_dashInitialized = false;
     // rebuildUi 가 탭 위젯을 새로 만들기 때문에, 보고 있던 탭을 기억해
     // 테마를 바꿔도 같은 자리에 남게 한다.
     int m_activeTab = 0;
+    // 1채널 크게보기 상태(0 = 4분할). rebuildUi 로 타일을 새로 만들어도
+    // 보고 있던 채널이 유지되도록 MainWindow 가 들고 있는다.
+    int m_soloChannel = 0;
     // TOP-VIEW 가 별도 창에 나가 있는 동안 스플리터 자리를 지키는 안내 라벨.
     // 비워두면 스플리터가 좌측 칸을 폭 전체로 늘려서 되돌릴 때 비율이 깨진다.
     QWidget *m_topViewWindow = nullptr;

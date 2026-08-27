@@ -3,8 +3,9 @@
 #include <QString>
 
 // 관제실 테마 토큰 — 두 모드:
-//   Developer(기본) : 기존 다크 테마 + 한화비전 브랜드 오렌지 액센트
-//   User            : 라이트 테마(같은 화면 구성, 배경/텍스트/액센트만 교체)
+//   Developer     : 다크 테마 + 한화비전 브랜드 오렌지 액센트
+//   User(기본)    : 라이트 테마(같은 화면 구성, 배경/텍스트/액센트만 교체)
+// SETTINGS 탭에서 [블랙]/[화이트] 로 고른다. 시작값은 화이트(User)다.
 // 색을 쓰는 쪽(Theme::Bg 등)은 전부 함수가 아니라 값처럼 그대로 읽으면 된다 —
 // setMode() 가 아래 mutable 값들을 통째로 갈아끼운다. 다만 이미 setStyleSheet()
 // 로 "구워진" 문자열은 재적용되지 않으므로, 모드를 바꾼 뒤에는 위젯을 다시
@@ -60,7 +61,7 @@ inline const Palette kUser = {
     /*Wall*/QColor("#78808a"), /*Grid*/QColor("#e4e8ec"), /*ScanHighlight*/QColor("#c98a4f"),
 };
 
-inline Mode CurrentMode = Mode::Developer;
+inline Mode CurrentMode = Mode::User;
 
 inline QColor Bg, Panel, PanelHead, BarBg, MapBg;
 inline QColor Border, BorderSoft, BorderRow;
@@ -88,10 +89,10 @@ inline void setMode(Mode mode) {
     Wall = p.Wall; Grid = p.Grid; ScanHighlight = p.ScanHighlight;
 }
 
-// 프로그램 시작 시 1회 Developer 값으로 초기화(정적 초기화 순서에 기대지 않게
-// 명시적으로 main() 에서도 setMode(Developer) 를 부르지만, 여기 즉시실행식으로도
-// 채워둬 Theme:: 값을 참조하는 다른 정적 초기화가 있어도 항상 유효하게 한다).
-inline bool _themeInit = [] { setMode(Mode::Developer); return true; }();
+// 프로그램 시작 시 1회 기본값(User = 화이트)으로 초기화한다. 즉시실행식으로
+// 채워둬야 Theme:: 값을 참조하는 다른 정적 초기화가 있어도 항상 유효하다 —
+// 정적 초기화 순서에 기대지 않으려는 장치다.
+inline bool _themeInit = [] { setMode(Mode::User); return true; }();
 
 inline QString mono(int px, int weight = 400) {
     return QString("font-family:'JetBrains Mono','D2Coding',monospace;font-size:%1px;font-weight:%2;")
@@ -137,6 +138,20 @@ QPushButton#powerOn  { background:%1; color:%2; font-weight:700; }
 QPushButton#powerOff { background:%3; color:%4; font-weight:700; }
 )").arg(OkBg.name(), OkBright.name())
    .arg(DangerBg.name(), DangerText.name());
+
+    // 체크박스는 기본 스타일에 맡기면 표시기(네모)가 배경색과 거의 같은 회색으로
+    // 그려져서 체크 여부는커녕 있는지도 안 보였다(다크에서 특히). 테두리를 주고,
+    // 켜지면 액센트로 꽉 채운다 — 체크 표시 이미지 없이 "채워짐 = 켜짐"으로 읽힌다.
+    css += QString(R"(
+QCheckBox          { background:transparent; color:%1; font-size:12px; spacing:8px; padding:2px 0; }
+QCheckBox:disabled { color:%2; }
+QCheckBox::indicator { width:15px; height:15px; border-radius:3px;
+                     border:1px solid %3; background:%4; }
+QCheckBox::indicator:hover   { border:1px solid %5; }
+QCheckBox::indicator:checked { background:%5; border:1px solid %5; }
+QCheckBox::indicator:checked:hover { background:%6; border:1px solid %6; }
+)").arg(Text2.name(), TextFaint.name(), Border.name())
+   .arg(Bg.name(), Accent.name(), AccentBright.name());
 
     css += QString(R"(
 QTabWidget::pane   { border:none; background:%1; }

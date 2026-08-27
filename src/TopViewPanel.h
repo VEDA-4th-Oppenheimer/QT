@@ -14,6 +14,12 @@ class QLabel;
 class TopViewPanel : public QFrame {
     Q_OBJECT
 public:
+    // 대시보드 스플리터에서 이 패널이 줄어들 수 있는 하한(바닥값). 실제 하한은
+    // 생성자에서 헤더가 요구하는 최소 폭과 비교해 큰 쪽으로 정해진다 — 헤더
+    // 버튼 라벨이 잘리지 않는 게 우선이고, 이 값은 그와 별개로 하단 통계 4칸
+    // (ROLL/PITCH/SCAN PTS/EXPECTED)과 범례가 읽히는 폭은 지키라는 뜻이다.
+    static constexpr int kMinWidth = 380;
+
     explicit TopViewPanel(QWidget *parent = nullptr);
 
     void setRoomSize(double w, double d);
