@@ -190,23 +190,13 @@ bool SpatialProjector::loadCalibrationResultJson(const QString &filePath, int ch
     return loadCalibrationResultData(data, channel, outSummary);
 }
 
-bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int channel, QString *outSummary) {
-    QJsonParseError err;
-    const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &err);
-    if (doc.isNull() || !doc.isObject()) {
-        if (outSummary) *outSummary = QStringLiteral("유효하지 않은 JSON 데이터입니다: ") + err.errorString();
-        return false;
-    }
-
-    const QJsonObject root = doc.object();
-    CameraProfile cp = profile(channel);
-    cp.channel = channel;
+static bool parseSingleCalibrationResult(const QJsonObject &obj, int targetChannel, CameraProfile &cp) {
     bool haveR = false;
     bool haveT = false;
 
-    // 1. OpenSDK / Auto-Calibration `calibration_result.json` 형식 파싱
-    if (root.contains("visualization_t_camera_lidar") && root.value("visualization_t_camera_lidar").isObject()) {
-        const QJsonObject vt = root.value("visualization_t_camera_lidar").toObject();
+    // 1. visualization_t_camera_lidar 형식
+    if (obj.contains("visualization_t_camera_lidar") && obj.value("visualization_t_camera_lidar").isObject()) {
+        const QJsonObject vt = obj.value("visualization_t_camera_lidar").toObject();
         if (vt.contains("rotation_matrix") && vt.value("rotation_matrix").isArray()) {
             const QJsonArray rMat = vt.value("rotation_matrix").toArray();
             if (rMat.size() == 3) {
@@ -230,9 +220,9 @@ bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int
     }
 
     // 2. candidate_results 배열에서 선택된 후보 파싱 (fallback)
-    if ((!haveR || !haveT) && root.contains("candidate_results") && root.value("candidate_results").isArray()) {
-        const QJsonArray cands = root.value("candidate_results").toArray();
-        int selIdx = root.value("selected_candidate").toInt(0);
+    if ((!haveR || !haveT) && obj.contains("candidate_results") && obj.value("candidate_results").isArray()) {
+        const QJsonArray cands = obj.value("candidate_results").toArray();
+        int selIdx = obj.value("selected_candidate").toInt(0);
         if (selIdx < 0 || selIdx >= cands.size()) selIdx = 0;
         if (selIdx < cands.size()) {
             const QJsonObject cand = cands.at(selIdx).toObject();
@@ -262,8 +252,8 @@ bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int
     }
 
     // 3. 단순 { rotation_matrix: [...], translation_vector / translation_m: [...] } 형식 파싱
-    if ((!haveR || !haveT) && root.contains("rotation_matrix")) {
-        const QJsonArray rMat = root.value("rotation_matrix").toArray();
+    if ((!haveR || !haveT) && obj.contains("rotation_matrix")) {
+        const QJsonArray rMat = obj.value("rotation_matrix").toArray();
         if (rMat.size() == 3) {
             int idx = 0;
             for (int row = 0; row < 3; ++row) {
@@ -274,10 +264,10 @@ bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int
             }
             if (idx == 9) haveR = true;
         }
-        const QString tKey = root.contains("translation_m") ? QStringLiteral("translation_m")
+        const QString tKey = obj.contains("translation_m") ? QStringLiteral("translation_m")
                                                            : QStringLiteral("translation_vector");
-        if (root.contains(tKey) && root.value(tKey).isArray()) {
-            const QJsonArray tArr = root.value(tKey).toArray();
+        if (obj.contains(tKey) && obj.value(tKey).isArray()) {
+            const QJsonArray tArr = obj.value(tKey).toArray();
             if (tArr.size() == 3) {
                 for (int i = 0; i < 3; ++i) cp.t[i] = tArr.at(i).toDouble();
                 haveT = true;
@@ -286,8 +276,8 @@ bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int
     }
 
     // 4. Intrinsics (내부 파라미터) 업데이트 (존재하는 경우)
-    if (root.contains("active_intrinsics") && root.value("active_intrinsics").isObject()) {
-        const QJsonObject inObj = root.value("active_intrinsics").toObject();
+    if (obj.contains("active_intrinsics") && obj.value("active_intrinsics").isObject()) {
+        const QJsonObject inObj = obj.value("active_intrinsics").toObject();
         if (inObj.contains("fx")) cp.fx = inObj.value("fx").toDouble(cp.fx);
         if (inObj.contains("fy")) cp.fy = inObj.value("fy").toDouble(cp.fy);
         if (inObj.contains("cx")) cp.cx = inObj.value("cx").toDouble(cp.cx);
@@ -301,16 +291,127 @@ bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int
         }
     }
 
-    if (!haveR || !haveT) {
+    return (haveR && haveT);
+}
+
+bool SpatialProjector::loadCalibrationResultData(const QByteArray &jsonData, int channel, QString *outSummary) {
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &err);
+    if (doc.isNull() || !doc.isObject()) {
+        if (outSummary) *outSummary = QStringLiteral("유효하지 않은 JSON 데이터입니다: ") + err.errorString();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+
+    // ── CASE A: 멀티채널 세션 결과 형식 (root 에 "channels" 배열이 있는 경우) ──
+    if (root.contains("channels") && root.value("channels").isArray()) {
+        const QJsonArray chList = root.value("channels").toArray();
+        QStringList appliedDetails;
+        QStringList rejectedDetails;
+        int appliedCount = 0;
+
+        for (const QJsonValue &cv : chList) {
+            if (!cv.isObject()) continue;
+            const QJsonObject co = cv.toObject();
+
+            int uiCh = co.value("ui_channel").toInt(0);
+            if (uiCh <= 0) {
+                uiCh = co.value("sdk_channel").toInt(-1) + 1;
+            }
+            if (uiCh < 1 || uiCh > 4) continue;
+
+            // 특정 채널만 타깃팅된 경우(channel > 0), 다른 채널은 건너뜀
+            if (channel > 0 && uiCh != channel) continue;
+
+            const QString state = co.value("state").toString();
+            const QString detail = co.value("detail").toString();
+            const QJsonObject resObj = co.value("result").toObject();
+            const QString reasonCode = resObj.value("reason_code").toString();
+
+            // 성공/품질통과 여부 판정 (state 가 candidate_ready 이거나 detail 이 INTERNAL_GATE_PASS 이거나 reason_code 가 PASS)
+            const bool isPass = (state == QStringLiteral("candidate_ready") ||
+                                 detail == QStringLiteral("INTERNAL_GATE_PASS") ||
+                                 reasonCode == QStringLiteral("PASS"));
+
+            CameraProfile cp = profile(uiCh);
+            cp.channel = uiCh;
+
+            if (isPass && parseSingleCalibrationResult(resObj, uiCh, cp)) {
+                cp.enabled = true;
+                m_profiles.insert(uiCh, cp);
+
+                ExtrinsicRt rt;
+                for (int i = 0; i < 9; ++i) rt.r[i] = cp.r[i];
+                for (int i = 0; i < 3; ++i) rt.t[i] = cp.t[i];
+                rt.valid = true;
+                m_autoRts.insert(uiCh, rt);
+
+                appliedDetails.append(QString::fromUtf8("CH%1 (t=[%2, %3, %4] m)")
+                                         .arg(uiCh)
+                                         .arg(cp.t[0], 0, 'f', 2)
+                                         .arg(cp.t[1], 0, 'f', 2)
+                                         .arg(cp.t[2], 0, 'f', 2));
+                ++appliedCount;
+            } else {
+                QString failReason = reasonCode;
+                if (failReason.isEmpty()) failReason = detail;
+                if (failReason.isEmpty()) failReason = state;
+                if (failReason == QStringLiteral("FINALIST_AMBIGUOUS")) {
+                    failReason = QStringLiteral("모호성 탈락 (FINALIST_AMBIGUOUS)");
+                } else if (failReason == QStringLiteral("OVERLAP_INSUFFICIENT")) {
+                    failReason = QStringLiteral("중첩 부족 (OVERLAP_INSUFFICIENT)");
+                }
+                rejectedDetails.append(QString::fromUtf8("CH%1: %2").arg(uiCh).arg(failReason));
+            }
+        }
+
+        setCalibrationMode(CalibrationMode::Automatic);
+
+        if (appliedCount > 0) {
+            QString summary = QString::fromUtf8("✅ 자동 적용 성공 (%1개 채널):\n• %2")
+                                  .arg(appliedCount)
+                                  .arg(appliedDetails.join(QStringLiteral("\n• ")));
+            if (!rejectedDetails.isEmpty()) {
+                summary += QString::fromUtf8("\n\n⚠️ 품질 미달로 제외 (%1개 채널):\n• %2")
+                               .arg(rejectedDetails.size())
+                               .arg(rejectedDetails.join(QStringLiteral("\n• ")));
+            }
+            if (outSummary) *outSummary = summary;
+            return true;
+        } else {
+            if (outSummary) {
+                *outSummary = QString::fromUtf8("유효한 캘리브레이션 채널이 없습니다.\n제외 사유:\n• %1")
+                                  .arg(rejectedDetails.join(QStringLiteral("\n• ")));
+            }
+            return false;
+        }
+    }
+
+    // ── CASE B: 단일 채널 결과 파일 형식 ──
+    const int targetCh = (channel > 0) ? channel : 1;
+    CameraProfile cp = profile(targetCh);
+    cp.channel = targetCh;
+
+    if (!parseSingleCalibrationResult(root, targetCh, cp)) {
         if (outSummary) *outSummary = QStringLiteral("JSON에서 회전(R) 및 이동(t) 매트릭스를 찾을 수 없습니다.");
         return false;
     }
 
     cp.enabled = true;
-    m_profiles.insert(channel, cp);
+    m_profiles.insert(targetCh, cp);
+
+    ExtrinsicRt rt;
+    for (int i = 0; i < 9; ++i) rt.r[i] = cp.r[i];
+    for (int i = 0; i < 3; ++i) rt.t[i] = cp.t[i];
+    rt.valid = true;
+    m_autoRts.insert(targetCh, rt);
+
+    setCalibrationMode(CalibrationMode::Automatic);
 
     const QString summaryText = QString::fromUtf8("CH%1 최신 캘리브레이션 R,t 성공적 적용\n"
-                                                  "t = [%1, %2, %3] m")
+                                                  "t = [%2, %3, %4] m")
+                                    .arg(targetCh)
                                     .arg(cp.t[0], 0, 'f', 4)
                                     .arg(cp.t[1], 0, 'f', 4)
                                     .arg(cp.t[2], 0, 'f', 4);

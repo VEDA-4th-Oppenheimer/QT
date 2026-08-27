@@ -72,9 +72,9 @@ public:
     // Load calibration profiles from JSON file
     bool loadProfiles(const QString &filePath);
 
-    // OpenSDK 또는 자동 캘리브레이션 산출물(result.json / calibration_result.json) 로드 및 즉시 반영
-    bool loadCalibrationResultJson(const QString &filePath, int channel = 1, QString *outSummary = nullptr);
-    bool loadCalibrationResultData(const QByteArray &jsonData, int channel = 1, QString *outSummary = nullptr);
+    // OpenSDK 또는 자동 캘리브레이션 산출물(result.json / calibration_result.json) 로드 및 즉시 반영 (channel=0 이면 멀티채널 자동 매핑)
+    bool loadCalibrationResultJson(const QString &filePath, int channel = 0, QString *outSummary = nullptr);
+    bool loadCalibrationResultData(const QByteArray &jsonData, int channel = 0, QString *outSummary = nullptr);
 
     // 카메라 내부 파라미터 profile (camera.json 또는 calibration_profiles.json 형식) 로드 및 즉시 반영
     bool loadIntrinsicProfileJson(const QString &filePath, int channel = 1, QString *outSummary = nullptr);

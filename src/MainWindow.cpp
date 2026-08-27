@@ -847,7 +847,7 @@ void MainWindow::openCalibrationResultFile() {
     if (path.isEmpty()) return;
 
     QString summary;
-    const bool success = SpatialProjector::instance().loadCalibrationResultJson(path, 1, &summary);
+    const bool success = SpatialProjector::instance().loadCalibrationResultJson(path, 0, &summary);
     if (success) {
         appendLog("CALIB", QString::fromUtf8("최신 캘리브레이션 결과 불러오기 성공: %1").arg(path));
         appendLog("CALIB", summary);
@@ -1034,17 +1034,19 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
             return;
         }
 
-        // 캘리브레이션 결과 자동 적용
+        // 캘리브레이션 결과 자동 적용 (0 = 멀티채널 자동 분기)
         QString summary;
-        bool applied = SpatialProjector::instance().loadCalibrationResultData(responseData, 1, &summary);
+        bool applied = SpatialProjector::instance().loadCalibrationResultData(responseData, 0, &summary);
 
         appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 다운로드 완료: %1 -> %2")
                                .arg(sessionId, savePath));
 
         QString msg = QString::fromUtf8("캘리브레이션 결과를 저장했습니다.\n\n%1").arg(savePath);
         if (applied) {
-            msg += QString::fromUtf8("\n\n✅ 3D/2D Top-View 에 즉시 적용되었습니다:\n%1").arg(summary);
+            msg += QString::fromUtf8("\n\n3D/2D Top-View 에 즉시 반영되었습니다:\n%1").arg(summary);
             if (m_topView) m_topView->update();
+        } else {
+            msg += QString::fromUtf8("\n\n⚠️ 유효한 채널이 없어 투영에 반영되지 않았습니다:\n%1").arg(summary);
         }
 
         QMessageBox::information(modalParent(), QString::fromUtf8("다운로드 및 적용 완료"), msg);

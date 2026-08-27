@@ -262,6 +262,98 @@ void testPerChannelLoading() {
     std::cout << "[PASS] testPerChannelLoading: CH2 intrinsics and CH3 manual RT loaded independently!\n";
 }
 
+void testMultiChannelRejectedSessionParsing() {
+    SpatialProjector &projector = SpatialProjector::instance();
+
+    // 4채널 중 CH1, CH4는 성공, CH2, CH3은 기각(FAIL)되어 세션 전체가 status: rejected 인 실제 세션 JSON 구조
+    const QByteArray multiChannelSessionJson = R"({
+        "schema_version": "2.0",
+        "result_type": "multi_channel_lidar_camera_calibration",
+        "session_id": "calib-20260827-181654",
+        "status": "rejected",
+        "activation_allowed": false,
+        "channel_count": 4,
+        "candidate_ready_channels": 2,
+        "rejected_channels": 2,
+        "channels": [
+            {
+                "ui_channel": 1,
+                "sdk_channel": 0,
+                "state": "candidate_ready",
+                "detail": "INTERNAL_GATE_PASS",
+                "result": {
+                    "reason_code": "PASS",
+                    "visualization_t_camera_lidar": {
+                        "rotation_matrix": [
+                            [0.9998, 0.0051, -0.0194],
+                            [-0.0052, 0.9999, -0.0041],
+                            [0.0194, 0.0042, 0.9998]
+                        ],
+                        "translation_m": [0.0513, 0.0685, 0.0525]
+                    }
+                }
+            },
+            {
+                "ui_channel": 2,
+                "sdk_channel": 1,
+                "state": "rejected",
+                "detail": "FAIL",
+                "result": {
+                    "reason_code": "FINALIST_AMBIGUOUS"
+                }
+            },
+            {
+                "ui_channel": 3,
+                "sdk_channel": 2,
+                "state": "rejected",
+                "detail": "FAIL",
+                "result": {
+                    "reason_code": "OVERLAP_INSUFFICIENT"
+                }
+            },
+            {
+                "ui_channel": 4,
+                "sdk_channel": 3,
+                "state": "candidate_ready",
+                "detail": "INTERNAL_GATE_PASS",
+                "result": {
+                    "reason_code": "PASS",
+                    "visualization_t_camera_lidar": {
+                        "rotation_matrix": [
+                            [-0.0125, -0.9999, 0.0035],
+                            [0.9999, -0.0125, 0.0084],
+                            [-0.0084, 0.0034, 0.9999]
+                        ],
+                        "translation_m": [-0.2800, -0.0001, -0.0001]
+                    }
+                }
+            }
+        ]
+    })";
+
+    QString summary;
+    bool ok = projector.loadCalibrationResultData(multiChannelSessionJson, 0, &summary);
+    assert(ok);
+    assert(summary.contains("자동 적용 성공 (2개 채널)"));
+    assert(summary.contains("CH1"));
+    assert(summary.contains("CH4"));
+    assert(summary.contains("품질 미달로 제외"));
+    assert(summary.contains("CH2"));
+    assert(summary.contains("CH3"));
+
+    // CH1 적용 검증
+    CameraProfile cp1 = projector.profile(1);
+    assert(std::abs(cp1.t[0] - 0.0513) < 1e-3);
+    assert(std::abs(cp1.t[1] - 0.0685) < 1e-3);
+    assert(std::abs(cp1.t[2] - 0.0525) < 1e-3);
+
+    // CH4 적용 검증
+    CameraProfile cp4 = projector.profile(4);
+    assert(std::abs(cp4.t[0] - (-0.2800)) < 1e-3);
+
+    std::cout << "[PASS] testMultiChannelRejectedSessionParsing: parsed rejected multi-channel session and applied PASS channels (CH1, CH4) successfully!\n";
+}
+
 int main() {
     testSpatialProjectorCH1();
     testSpatialMetadataOnvifWithProjection();
@@ -270,6 +362,7 @@ int main() {
     testLoadIntrinsicProfileJson();
     testLoadManualExtrinsicJson();
     testPerChannelLoading();
-    std::cout << "All spatial projection tests (including per-channel loading) PASS!\n";
+    testMultiChannelRejectedSessionParsing();
+    std::cout << "All spatial projection tests (including multi-channel rejected session parsing) PASS!\n";
     return 0;
 }
