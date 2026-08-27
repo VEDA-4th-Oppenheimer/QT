@@ -128,6 +128,14 @@ QPushButton#accent:hover { background:%6; color:%5; }
    .arg(BorderSoft.name(), Text2.name())
    .arg(AccentBg.name(), AccentBright.name());
 
+    // 비활성 버튼에 규칙이 없으면 QSS 로 배경·글자색을 이미 지정한 탓에 활성일
+    // 때와 똑같이 보인다 — 눌러도 아무 일이 없으니 "버튼이 안 눌린다"가 된다.
+    // 흐리게 죽이고 hover 반응도 없애서 못 누르는 상태임을 눈으로 알게 한다.
+    css += QString(R"(
+QPushButton:disabled       { background:%1; color:%2; border:1px solid %3; }
+QPushButton:disabled:hover { background:%1; color:%2; border:1px solid %3; }
+)").arg(NeutralBg.name(), TextGhost.name(), BorderSoft.name());
+
     // border-color 를 따로 주면 Qt 스타일(Fusion/macOS 둘 다)이 버튼 아래쪽
     // 변에 자체 베벨/그림자를 겹쳐 그려서 밑변만 다른 색으로 보이는 문제가
     // 있었다. border 를 아예 안 건드리고 기본 QPushButton 규칙의 회색

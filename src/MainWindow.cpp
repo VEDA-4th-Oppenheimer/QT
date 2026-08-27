@@ -15,6 +15,7 @@
 #include "ScanFetcher.h"
 #include "ScanListDialog.h"
 #include "CameraCalibDialog.h"
+#include <QApplication>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QPushButton>
@@ -691,12 +692,54 @@ void MainWindow::logout() {
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (btn != QMessageBox::Yes) return;
 
-    const QString root = userDataRoot();
-    if (!QDir(root).removeRecursively()) {
+    const QString root = QDir(userDataRoot()).absolutePath();
+    // 이미 없는 경우(직접 지웠거나 애초에 배포본이 아닌 경우)는 실패가 아니다.
+    if (QDir(root).exists() && !QDir(root).removeRecursively()) {
         QMessageBox::critical(
             this, QString::fromUtf8("삭제 실패"),
             QString::fromUtf8("아래 폴더를 지우지 못했습니다. 직접 삭제해 주세요.\n\n%1").arg(root));
         return;
+    }
+
+    // 사용자 데이터를 지워도 개발 트리(프로젝트 폴더)에 config/certs 가 남아
+    // 있으면 다음 실행에도 그대로 로그인된 상태가 된다 — resolveConfigPath 가
+    // 개발 편의를 위해 개발 트리를 사용자 데이터보다 먼저 보기 때문이다
+    // (ConfigPath.h 참고). 그 정책은 그대로 두고, 여기서 남은 파일을 짚어
+    // 같이 지울지 묻는다. 말없이 두면 "로그아웃했는데 왜 로그인되지" 가 된다.
+    QStringList leftovers;
+    for (const QString &name : {QStringLiteral("config/mqtt.json"),
+                                QStringLiteral("config/cameras.json"),
+                                QStringLiteral("certs")}) {
+        const QFileInfo info(resolveConfigPath(name));
+        if (!info.exists()) continue;
+        const QString path = info.absoluteFilePath();
+        if (path == root || path.startsWith(root + QLatin1Char('/'))) continue;   // 방금 지운 곳
+        leftovers << path;
+    }
+
+    if (!leftovers.isEmpty()) {
+        const auto also = QMessageBox::question(
+            this, QString::fromUtf8("남은 설정"),
+            QString::fromUtf8(
+                "아래가 남아 있어 다시 실행해도 로그인 상태가 유지됩니다.\n"
+                "개발 트리의 설정이 사용자 데이터보다 먼저 쓰이기 때문입니다.\n\n%1\n\n"
+                "같이 지울까요? (아니오를 고르면 등록 화면이 나타나지 않습니다)")
+                .arg(leftovers.join(QLatin1Char('\n'))),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (also == QMessageBox::Yes) {
+            QStringList failed;
+            for (const QString &path : std::as_const(leftovers)) {
+                const bool ok = QFileInfo(path).isDir() ? QDir(path).removeRecursively()
+                                                        : QFile::remove(path);
+                if (!ok) failed << path;
+            }
+            if (!failed.isEmpty()) {
+                QMessageBox::critical(
+                    this, QString::fromUtf8("삭제 실패"),
+                    QString::fromUtf8("아래를 지우지 못했습니다. 직접 삭제해 주세요.\n\n%1")
+                        .arg(failed.join(QLatin1Char('\n'))));
+            }
+        }
     }
 
     // 여기서 마법사를 다시 띄우지 않고 종료한다. MQTT 연결과 RTSP 디코더를 살아
@@ -779,9 +822,19 @@ void MainWindow::editSensorHeight() {
     if (m_settingsTab != nullptr) m_settingsTab->setSensorHeight(m_sensorHeightMm);
 }
 
+// 모달 다이얼로그를 붙일 창. TOP-VIEW 를 별도 창으로 빼면 그 창이 전체화면으로
+// 뜨는데(macOS 에서는 자기 Space 를 차지한다), 거기 헤더 버튼으로 연 파일
+// 다이얼로그를 MainWindow 에 붙이면 본창이 있는 Space 에 열린다 — 화면에는
+// 아무것도 안 뜨는데 모달이라 입력만 막히는, "파일이 안 뜬다" 로 보이는 상태다.
+// 지금 사용자가 보고 있는 창에 붙여서 항상 눈앞에 뜨게 한다.
+QWidget *MainWindow::modalParent() {
+    QWidget *active = QApplication::activeWindow();
+    return active != nullptr ? active : this;
+}
+
 void MainWindow::openScanFile() {
     const QString path = QFileDialog::getOpenFileName(
-        this, QString::fromUtf8("스캔 파일 열기"), QString(),
+        modalParent(), QString::fromUtf8("스캔 파일 열기"), QString(),
         QString::fromUtf8("포인트클라우드 (*.pcd);;모든 파일 (*)"));
     if (path.isEmpty()) return;
     m_scanFetcher->loadLocal(path);
@@ -789,7 +842,7 @@ void MainWindow::openScanFile() {
 
 void MainWindow::openCalibrationResultFile() {
     const QString path = QFileDialog::getOpenFileName(
-        this, QString::fromUtf8("OpenSDK 캘리브레이션 결과 파일 열기"), QString(),
+        modalParent(), QString::fromUtf8("OpenSDK 캘리브레이션 결과 파일 열기"), QString(),
         QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
     if (path.isEmpty()) return;
 
@@ -798,12 +851,12 @@ void MainWindow::openCalibrationResultFile() {
     if (success) {
         appendLog("CALIB", QString::fromUtf8("최신 캘리브레이션 결과 불러오기 성공: %1").arg(path));
         appendLog("CALIB", summary);
-        QMessageBox::information(this, QString::fromUtf8("캘리브레이션 적용 완료"),
+        QMessageBox::information(modalParent(), QString::fromUtf8("캘리브레이션 적용 완료"),
                                  QString::fromUtf8("최신 캘리브레이션 결과가 성공적으로 적용되었습니다.\n\n%1").arg(summary));
         if (m_topView) m_topView->update();
     } else {
         appendLog("CALIB", QString::fromUtf8("캘리브레이션 결과 불러오기 실패: %1").arg(summary));
-        QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
+        QMessageBox::warning(modalParent(), QString::fromUtf8("불러오기 실패"),
                              QString::fromUtf8("캘리브레이션 결과를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
     }
 }
@@ -815,7 +868,7 @@ void MainWindow::openIntrinsicProfileFile(int channel) {
     const QString title = QString::fromUtf8("[%1] 카메라 내부 파라미터(Intrinsic) 파일 열기").arg(targetStr);
 
     const QString path = QFileDialog::getOpenFileName(
-        this, title, QString(),
+        modalParent(), title, QString(),
         QString::fromUtf8("카메라 파라미터 (*.json);;모든 파일 (*)"));
     if (path.isEmpty()) return;
 
@@ -824,12 +877,12 @@ void MainWindow::openIntrinsicProfileFile(int channel) {
     if (success) {
         appendLog("CALIB", QString::fromUtf8("[%1] 내부 파라미터 불러오기 성공: %2").arg(targetStr, path));
         appendLog("CALIB", summary);
-        QMessageBox::information(this, QString::fromUtf8("내부 파라미터 적용 완료"),
+        QMessageBox::information(modalParent(), QString::fromUtf8("내부 파라미터 적용 완료"),
                                  QString::fromUtf8("[%1] 카메라 내부 파라미터가 성공적으로 적용되었습니다.\n\n%2").arg(targetStr, summary));
         if (m_topView) m_topView->update();
     } else {
         appendLog("CALIB", QString::fromUtf8("[%1] 내부 파라미터 불러오기 실패: %2").arg(targetStr, summary));
-        QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
+        QMessageBox::warning(modalParent(), QString::fromUtf8("불러오기 실패"),
                              QString::fromUtf8("[%1] 내부 파라미터를 적용하지 못했습니다.\n\n사유: %2").arg(targetStr, summary));
     }
 }
@@ -841,7 +894,7 @@ void MainWindow::openManualRtFile(int channel) {
     const QString title = QString::fromUtf8("[%1] Manual RT (외부 파라미터) 파일 열기").arg(targetStr);
 
     const QString path = QFileDialog::getOpenFileName(
-        this, title, QString(),
+        modalParent(), title, QString(),
         QString::fromUtf8("Manual RT (*.json);;모든 파일 (*)"));
     if (path.isEmpty()) return;
 
@@ -854,12 +907,12 @@ void MainWindow::openManualRtFile(int channel) {
             m_settingsTab->setCalibMode(true);
         }
         QSettings().setValue(QStringLiteral("calib/is_manual"), true);
-        QMessageBox::information(this, QString::fromUtf8("Manual RT 적용 완료"),
+        QMessageBox::information(modalParent(), QString::fromUtf8("Manual RT 적용 완료"),
                                  QString::fromUtf8("[%1] 수동 캘리브레이션 RT가 적용되었으며 Manual RT 모드로 전환되었습니다.\n\n%2").arg(targetStr, summary));
         if (m_topView) m_topView->update();
     } else {
         appendLog("CALIB", QString::fromUtf8("[%1] Manual RT 불러오기 실패: %2").arg(targetStr, summary));
-        QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
+        QMessageBox::warning(modalParent(), QString::fromUtf8("불러오기 실패"),
                              QString::fromUtf8("[%1] Manual RT를 적용하지 못했습니다.\n\n사유: %2").arg(targetStr, summary));
     }
 }
@@ -894,8 +947,11 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
 
     QString downloadDirectory = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (downloadDirectory.isEmpty()) downloadDirectory = QDir::homePath();
+    // 부모를 MainWindow 로 두면 macOS 에서 저장 시트가 본창에 붙는다. 사용자가
+    // 보고 있는 건 그 앞의 CameraCalibDialog 라, 시트가 뒤에서 열려 아무 일도
+    // 안 일어난 것처럼 보인다 — 누른 창에 붙인다(modalParent 주석 참고).
     const QString savePath = QFileDialog::getSaveFileName(
-        this,
+        modalParent(),
         QString::fromUtf8("캘리브레이션 결과 저장"),
         QDir(downloadDirectory).filePath(safeFileName),
         QString::fromUtf8("캘리브레이션 결과 (*.json);;모든 파일 (*)"));
@@ -921,7 +977,7 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
         const QString error = QString::fromUtf8("서버가 잘못된 결과 다운로드 주소를 반환했습니다: %1")
                                   .arg(downloadUrl);
         appendLog("CALIB", error);
-        QMessageBox::warning(this, QString::fromUtf8("다운로드 주소 오류"), error);
+        QMessageBox::warning(modalParent(), QString::fromUtf8("다운로드 주소 오류"), error);
         return;
     }
 
@@ -955,7 +1011,7 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
                                       .arg(httpStatus)
                                       .arg(reply->errorString());
             appendLog("CALIB", error);
-            QMessageBox::warning(this, QString::fromUtf8("다운로드 실패"), error);
+            QMessageBox::warning(modalParent(), QString::fromUtf8("다운로드 실패"), error);
             return;
         }
 
@@ -965,7 +1021,7 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
             const QString error = QString::fromUtf8("다운로드 응답이 올바른 JSON이 아닙니다: %1")
                                       .arg(parseError.errorString());
             appendLog("CALIB", error);
-            QMessageBox::warning(this, QString::fromUtf8("응답 형식 오류"), error);
+            QMessageBox::warning(modalParent(), QString::fromUtf8("응답 형식 오류"), error);
             return;
         }
 
@@ -974,7 +1030,7 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
             !output.commit()) {
             const QString error = QString::fromUtf8("다운로드 파일 저장 실패: %1").arg(savePath);
             appendLog("CALIB", error);
-            QMessageBox::warning(this, QString::fromUtf8("파일 저장 실패"), error);
+            QMessageBox::warning(modalParent(), QString::fromUtf8("파일 저장 실패"), error);
             return;
         }
 
@@ -991,7 +1047,7 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
             if (m_topView) m_topView->update();
         }
 
-        QMessageBox::information(this, QString::fromUtf8("다운로드 및 적용 완료"), msg);
+        QMessageBox::information(modalParent(), QString::fromUtf8("다운로드 및 적용 완료"), msg);
     });
 }
 
@@ -1103,6 +1159,16 @@ void MainWindow::showCameraCalibDialog() {
         QVector<CameraCalibEntry> entries;
         const QJsonArray results = document.object().value(QStringLiteral("results")).toArray();
         entries.reserve(results.size());
+
+        // 진단용. "다운로드할 결과가 없습니다" 는 result_available 과 download_url
+        // 두 값에만 달려 있는데, 화면에는 판정 결과만 보여서 어느 쪽이 막았는지
+        // 알 수가 없었다. 응답 키 이름 자체가 우리 기대와 다른 경우(카멜케이스
+        // 등)도 여기서 바로 드러난다 — 그러면 모든 값이 "(키 없음)" 으로 찍힌다.
+        if (!results.isEmpty() && results.constBegin()->isObject()) {
+            appendLog("CALIB", QString::fromUtf8("응답 항목 키: %1")
+                                   .arg(results.constBegin()->toObject().keys().join(QStringLiteral(", "))));
+        }
+
         for (const QJsonValue &value : results) {
             if (!value.isObject()) continue;
             const QJsonObject object = value.toObject();
@@ -1118,6 +1184,20 @@ void MainWindow::showCameraCalibDialog() {
             entry.downloadUrl = object.value(QStringLiteral("download_url")).toString();
             entry.resultAvailable = object.value(QStringLiteral("result_available")).toBool() &&
                                     !entry.downloadUrl.isEmpty();
+
+            const auto describe = [&object](const char *key, const QString &parsed) {
+                if (!object.contains(QLatin1String(key))) return QString::fromUtf8("(키 없음)");
+                if (parsed.isEmpty()) return QString::fromUtf8("(빈 값)");
+                return parsed;
+            };
+            appendLog("CALIB", QString::fromUtf8("  · %1 | result_available=%2 | download_url=%3")
+                                   .arg(describe("session_id", entry.sessionId),
+                                        object.contains(QStringLiteral("result_available"))
+                                            ? (object.value(QStringLiteral("result_available")).toBool()
+                                                   ? QStringLiteral("true") : QStringLiteral("false"))
+                                            : QString::fromUtf8("(키 없음)"),
+                                        describe("download_url", entry.downloadUrl)));
+
             entries.append(entry);
         }
 
