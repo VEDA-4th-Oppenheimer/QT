@@ -218,6 +218,50 @@ void testLoadManualExtrinsicJson() {
     std::cout << "[PASS] testLoadManualExtrinsicJson: loaded T_camera_lidar manual RT format successfully!\n";
 }
 
+void testPerChannelLoading() {
+    SpatialProjector &projector = SpatialProjector::instance();
+
+    // CH2 에 별도의 내부 파라미터 로드
+    const QByteArray ch2CameraJson = R"({
+        "camera": {
+            "resolution": [1280, 720],
+            "intrinsic": {"fx": 1100.0, "fy": 1105.0, "cx": 640.0, "cy": 360.0},
+            "distortion": [-0.1, 0.05, 0.0, 0.0, 0.0]
+        }
+    })";
+    QString sum;
+    bool ok = projector.loadIntrinsicProfileData(ch2CameraJson, 2, &sum);
+    assert(ok);
+    CameraProfile cp2 = projector.profile(2);
+    assert(std::abs(cp2.fx - 1100.0) < 1e-3);
+    assert(cp2.imageWidth == 1280);
+
+    // CH3 에 별도의 Manual RT 로드
+    const QByteArray ch3ManualJson = R"({
+        "extrinsic": {
+            "rotation_matrix": [
+                [0.0, -1.0, 0.0],
+                [1.0,  0.0, 0.0],
+                [0.0,  0.0, 1.0]
+            ],
+            "translation_m": [1.5, 2.5, -0.5]
+        }
+    })";
+    ok = projector.loadManualExtrinsicData(ch3ManualJson, 3, &sum);
+    assert(ok);
+    CameraProfile cp3 = projector.profile(3);
+    assert(std::abs(cp3.t[0] - 1.5) < 1e-3);
+    assert(std::abs(cp3.t[1] - 2.5) < 1e-3);
+    assert(std::abs(cp3.t[2] - (-0.5)) < 1e-3);
+    assert(std::abs(cp3.r[1] - (-1.0)) < 1e-3);
+
+    // CH1 은 영향받지 않고 독립적으로 유지되는지 검증
+    CameraProfile cp1 = projector.profile(1);
+    assert(std::abs(cp1.fx - 1500.5) < 1e-3);
+
+    std::cout << "[PASS] testPerChannelLoading: CH2 intrinsics and CH3 manual RT loaded independently!\n";
+}
+
 int main() {
     testSpatialProjectorCH1();
     testSpatialMetadataOnvifWithProjection();
@@ -225,6 +269,7 @@ int main() {
     testLoadCalibrationResultJson();
     testLoadIntrinsicProfileJson();
     testLoadManualExtrinsicJson();
-    std::cout << "All spatial projection tests (including intrinsic and manual RT loading) PASS!\n";
+    testPerChannelLoading();
+    std::cout << "All spatial projection tests (including per-channel loading) PASS!\n";
     return 0;
 }

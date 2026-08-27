@@ -760,49 +760,59 @@ void MainWindow::openCalibrationResultFile() {
     }
 }
 
-void MainWindow::openIntrinsicProfileFile() {
+void MainWindow::openIntrinsicProfileFile(int channel) {
+    const QString targetStr = (channel >= 1 && channel <= 4)
+                                  ? QStringLiteral("CH%1 (센서 %2)").arg(channel).arg(channel - 1)
+                                  : QStringLiteral("전체 채널 자동");
+    const QString title = QString::fromUtf8("[%1] 카메라 내부 파라미터(Intrinsic) 파일 열기").arg(targetStr);
+
     const QString path = QFileDialog::getOpenFileName(
-        this, QString::fromUtf8("카메라 내부 파라미터(Intrinsic) 파일 열기"), QString(),
+        this, title, QString(),
         QString::fromUtf8("카메라 파라미터 (*.json);;모든 파일 (*)"));
     if (path.isEmpty()) return;
 
     QString summary;
-    const bool success = SpatialProjector::instance().loadIntrinsicProfileJson(path, 1, &summary);
+    const bool success = SpatialProjector::instance().loadIntrinsicProfileJson(path, channel, &summary);
     if (success) {
-        appendLog("CALIB", QString::fromUtf8("카메라 내부 파라미터 불러오기 성공: %1").arg(path));
+        appendLog("CALIB", QString::fromUtf8("[%1] 내부 파라미터 불러오기 성공: %2").arg(targetStr, path));
         appendLog("CALIB", summary);
         QMessageBox::information(this, QString::fromUtf8("내부 파라미터 적용 완료"),
-                                 QString::fromUtf8("카메라 내부 파라미터가 성공적으로 적용되었습니다.\n\n%1").arg(summary));
+                                 QString::fromUtf8("[%1] 카메라 내부 파라미터가 성공적으로 적용되었습니다.\n\n%2").arg(targetStr, summary));
         if (m_topView) m_topView->update();
     } else {
-        appendLog("CALIB", QString::fromUtf8("내부 파라미터 불러오기 실패: %1").arg(summary));
+        appendLog("CALIB", QString::fromUtf8("[%1] 내부 파라미터 불러오기 실패: %2").arg(targetStr, summary));
         QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
-                             QString::fromUtf8("내부 파라미터를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
+                             QString::fromUtf8("[%1] 내부 파라미터를 적용하지 못했습니다.\n\n사유: %2").arg(targetStr, summary));
     }
 }
 
-void MainWindow::openManualRtFile() {
+void MainWindow::openManualRtFile(int channel) {
+    const QString targetStr = (channel >= 1 && channel <= 4)
+                                  ? QStringLiteral("CH%1 (센서 %2)").arg(channel).arg(channel - 1)
+                                  : QStringLiteral("전체 채널 자동");
+    const QString title = QString::fromUtf8("[%1] Manual RT (외부 파라미터) 파일 열기").arg(targetStr);
+
     const QString path = QFileDialog::getOpenFileName(
-        this, QString::fromUtf8("Manual RT (외부 파라미터) 파일 열기"), QString(),
+        this, title, QString(),
         QString::fromUtf8("Manual RT (*.json);;모든 파일 (*)"));
     if (path.isEmpty()) return;
 
     QString summary;
-    const bool success = SpatialProjector::instance().loadManualExtrinsicJson(path, 1, &summary);
+    const bool success = SpatialProjector::instance().loadManualExtrinsicJson(path, channel, &summary);
     if (success) {
-        appendLog("CALIB", QString::fromUtf8("Manual RT 불러오기 성공: %1").arg(path));
+        appendLog("CALIB", QString::fromUtf8("[%1] Manual RT 불러오기 성공: %2").arg(targetStr, path));
         appendLog("CALIB", summary);
         if (m_settingsTab != nullptr) {
             m_settingsTab->setCalibMode(true);
         }
         QSettings().setValue(QStringLiteral("calib/is_manual"), true);
         QMessageBox::information(this, QString::fromUtf8("Manual RT 적용 완료"),
-                                 QString::fromUtf8("수동 캘리브레이션 RT가 적용되었으며 Manual RT 모드로 전환되었습니다.\n\n%1").arg(summary));
+                                 QString::fromUtf8("[%1] 수동 캘리브레이션 RT가 적용되었으며 Manual RT 모드로 전환되었습니다.\n\n%2").arg(targetStr, summary));
         if (m_topView) m_topView->update();
     } else {
-        appendLog("CALIB", QString::fromUtf8("Manual RT 불러오기 실패: %1").arg(summary));
+        appendLog("CALIB", QString::fromUtf8("[%1] Manual RT 불러오기 실패: %2").arg(targetStr, summary));
         QMessageBox::warning(this, QString::fromUtf8("불러오기 실패"),
-                             QString::fromUtf8("Manual RT를 적용하지 못했습니다.\n\n사유: %1").arg(summary));
+                             QString::fromUtf8("[%1] Manual RT를 적용하지 못했습니다.\n\n사유: %2").arg(targetStr, summary));
     }
 }
 

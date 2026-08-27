@@ -8,6 +8,32 @@
 #include <algorithm>
 
 SpatialProjector::SpatialProjector() {
+    // CH1 기본 Auto RT (기구 기하 기준)
+    ExtrinsicRt autoRt1;
+    const double defAutoR[9] = {
+        -0.8993516327308704, -0.021677413359161492,  0.4366883676655169,
+         0.03164503356422315,  0.9929235347745676,   0.11446154787306081,
+        -0.43607938790435485,  0.11676019801642104, -0.8923014197030784
+    };
+    const double defAutoT[3] = { 0.05155019269565374, 0.0786413559428178, 0.035313251335202904 };
+    for (int i = 0; i < 9; ++i) autoRt1.r[i] = defAutoR[i];
+    for (int i = 0; i < 3; ++i) autoRt1.t[i] = defAutoT[i];
+    autoRt1.valid = true;
+    m_autoRts.insert(1, autoRt1);
+
+    // CH1 기본 Manual RT (T_camera_lidar_110828.json 차루코 실측 기준)
+    ExtrinsicRt manRt1;
+    const double defManR[9] = {
+        -0.9835214245376979, -0.14262115873630146,  0.11110721198937619,
+        -0.07778521792557222,  0.8885863982986189,   0.452066004728247,
+        -0.16320253474627378,  0.43597410225769473, -0.8850375781925809
+    };
+    const double defManT[3] = { -0.040047519204563925, 0.07478418688424698, 0.1357633054748434 };
+    for (int i = 0; i < 9; ++i) manRt1.r[i] = defManR[i];
+    for (int i = 0; i < 3; ++i) manRt1.t[i] = defManT[i];
+    manRt1.valid = true;
+    m_manualRts.insert(1, manRt1);
+
     applyModeProfiles();
 }
 
@@ -30,29 +56,35 @@ QString SpatialProjector::calibrationModeName() const {
 }
 
 void SpatialProjector::applyModeProfiles() {
-    CameraProfile cp1 = m_profiles.value(1);
-    cp1.channel = 1;
-    if (cp1.imageWidth <= 0) cp1.imageWidth = 2592;
-    if (cp1.imageHeight <= 0) cp1.imageHeight = 1520;
-    if (cp1.fx <= 0.0) cp1.fx = 2033.901952;
-    if (cp1.fy <= 0.0) cp1.fy = 2037.779638;
-    if (cp1.cx <= 0.0) cp1.cx = 1337.029701;
-    if (cp1.cy <= 0.0) cp1.cy = 745.370056;
-    if (cp1.defaultGroundY <= 0.0) cp1.defaultGroundY = 1.789;
-    if (cp1.k1 == 0.0 && cp1.k2 == 0.0) {
-        cp1.k1 = -0.5653174394854492;
-        cp1.k2 =  0.34459385610316223;
-        cp1.p1 = -0.0039145365522611315;
-        cp1.p2 =  0.0008182748566205869;
-        cp1.k3 = -0.10809412486837452;
+    for (int ch = 1; ch <= 4; ++ch) {
+        CameraProfile cp = m_profiles.value(ch);
+        cp.channel = ch;
+        if (cp.imageWidth <= 0) cp.imageWidth = 2592;
+        if (cp.imageHeight <= 0) cp.imageHeight = 1520;
+        if (cp.fx <= 0.0) cp.fx = 2033.901952;
+        if (cp.fy <= 0.0) cp.fy = 2037.779638;
+        if (cp.cx <= 0.0) cp.cx = 1337.029701;
+        if (cp.cy <= 0.0) cp.cy = 745.370056;
+        if (cp.defaultGroundY <= 0.0) cp.defaultGroundY = 1.789;
+        if (cp.k1 == 0.0 && cp.k2 == 0.0) {
+            cp.k1 = -0.5653174394854492;
+            cp.k2 =  0.34459385610316223;
+            cp.p1 = -0.0039145365522611315;
+            cp.p2 =  0.0008182748566205869;
+            cp.k3 = -0.10809412486837452;
+        }
+
+        const auto &activeMap = (m_calibMode == CalibrationMode::Automatic) ? m_autoRts : m_manualRts;
+        if (activeMap.contains(ch) && activeMap.value(ch).valid) {
+            const ExtrinsicRt &rt = activeMap.value(ch);
+            for (int i = 0; i < 9; ++i) cp.r[i] = rt.r[i];
+            for (int i = 0; i < 3; ++i) cp.t[i] = rt.t[i];
+        }
+        if (ch == 1 || activeMap.contains(ch)) {
+            cp.enabled = true;
+            m_profiles.insert(ch, cp);
+        }
     }
-
-    const double *activeR = (m_calibMode == CalibrationMode::Automatic) ? m_autoR : m_manualR;
-    const double *activeT = (m_calibMode == CalibrationMode::Automatic) ? m_autoT : m_manualT;
-    for (int i = 0; i < 9; ++i) cp1.r[i] = activeR[i];
-    for (int i = 0; i < 3; ++i) cp1.t[i] = activeT[i];
-
-    m_profiles.insert(1, cp1);
 }
 
 bool SpatialProjector::hasProfile(int channel) const {
@@ -307,72 +339,92 @@ bool SpatialProjector::loadIntrinsicProfileData(const QByteArray &jsonData, int 
     }
 
     const QJsonObject root = doc.object();
-    QJsonObject target = root;
-    if (root.contains("camera") && root.value("camera").isObject()) {
-        target = root.value("camera").toObject();
-    } else if (root.contains(QString::number(channel)) && root.value(QString::number(channel)).isObject()) {
-        target = root.value(QString::number(channel)).toObject();
-    }
-
-    CameraProfile cp = profile(channel);
-    cp.channel = channel;
-    bool updated = false;
-
-    // Intrinsic (fx, fy, cx, cy)
-    QJsonObject intr = target.contains("intrinsic") && target.value("intrinsic").isObject()
-                           ? target.value("intrinsic").toObject()
-                           : target;
-
-    if (intr.contains("fx")) { cp.fx = intr.value("fx").toDouble(cp.fx); updated = true; }
-    if (intr.contains("fy")) { cp.fy = intr.value("fy").toDouble(cp.fy); updated = true; }
-    if (intr.contains("cx")) { cp.cx = intr.value("cx").toDouble(cp.cx); updated = true; }
-    if (intr.contains("cy")) { cp.cy = intr.value("cy").toDouble(cp.cy); updated = true; }
-
-    // Distortion
-    if (target.contains("distortion") && target.value("distortion").isArray()) {
-        const QJsonArray dist = target.value("distortion").toArray();
-        if (dist.size() >= 4) {
-            cp.k1 = dist.at(0).toDouble();
-            cp.k2 = dist.at(1).toDouble();
-            cp.p1 = dist.at(2).toDouble();
-            cp.p2 = dist.at(3).toDouble();
-            cp.k3 = (dist.size() >= 5) ? dist.at(4).toDouble() : 0.0;
-            updated = true;
-        }
-    }
-
-    // Resolution
-    if (target.contains("resolution") && target.value("resolution").isArray()) {
-        const QJsonArray res = target.value("resolution").toArray();
-        if (res.size() >= 2) {
-            cp.imageWidth = res.at(0).toInt(cp.imageWidth);
-            cp.imageHeight = res.at(1).toInt(cp.imageHeight);
-            updated = true;
-        }
+    QList<int> targetChannels;
+    if (channel >= 1 && channel <= 4) {
+        targetChannels.append(channel);
     } else {
-        if (target.contains("image_width"))  { cp.imageWidth  = target.value("image_width").toInt(cp.imageWidth); updated = true; }
-        if (target.contains("image_height")) { cp.imageHeight = target.value("image_height").toInt(cp.imageHeight); updated = true; }
+        // channel == 0 (전체 자동)
+        for (int ch = 1; ch <= 4; ++ch) {
+            if (root.contains(QString::number(ch))) targetChannels.append(ch);
+        }
+        if (targetChannels.isEmpty()) targetChannels.append(1);
     }
 
-    if (!updated) {
+    int appliedCount = 0;
+    QString lastDetail;
+
+    for (int ch : targetChannels) {
+        QJsonObject target = root;
+        if (root.contains(QString::number(ch)) && root.value(QString::number(ch)).isObject()) {
+            target = root.value(QString::number(ch)).toObject();
+        } else if (root.contains("camera") && root.value("camera").isObject()) {
+            target = root.value("camera").toObject();
+        }
+
+        CameraProfile cp = profile(ch);
+        cp.channel = ch;
+        bool updated = false;
+
+        QJsonObject intr = target.contains("intrinsic") && target.value("intrinsic").isObject()
+                               ? target.value("intrinsic").toObject()
+                               : target;
+
+        if (intr.contains("fx")) { cp.fx = intr.value("fx").toDouble(cp.fx); updated = true; }
+        if (intr.contains("fy")) { cp.fy = intr.value("fy").toDouble(cp.fy); updated = true; }
+        if (intr.contains("cx")) { cp.cx = intr.value("cx").toDouble(cp.cx); updated = true; }
+        if (intr.contains("cy")) { cp.cy = intr.value("cy").toDouble(cp.cy); updated = true; }
+
+        if (target.contains("distortion") && target.value("distortion").isArray()) {
+            const QJsonArray dist = target.value("distortion").toArray();
+            if (dist.size() >= 4) {
+                cp.k1 = dist.at(0).toDouble();
+                cp.k2 = dist.at(1).toDouble();
+                cp.p1 = dist.at(2).toDouble();
+                cp.p2 = dist.at(3).toDouble();
+                cp.k3 = (dist.size() >= 5) ? dist.at(4).toDouble() : 0.0;
+                updated = true;
+            }
+        }
+
+        if (target.contains("resolution") && target.value("resolution").isArray()) {
+            const QJsonArray res = target.value("resolution").toArray();
+            if (res.size() >= 2) {
+                cp.imageWidth = res.at(0).toInt(cp.imageWidth);
+                cp.imageHeight = res.at(1).toInt(cp.imageHeight);
+                updated = true;
+            }
+        } else {
+            if (target.contains("image_width"))  { cp.imageWidth  = target.value("image_width").toInt(cp.imageWidth); updated = true; }
+            if (target.contains("image_height")) { cp.imageHeight = target.value("image_height").toInt(cp.imageHeight); updated = true; }
+        }
+
+        if (updated) {
+            cp.enabled = true;
+            m_profiles.insert(ch, cp);
+            ++appliedCount;
+            lastDetail = QString::fromUtf8("CH%1: fx=%2, fy=%3, cx=%4, cy=%5 (%6x%7)")
+                             .arg(ch)
+                             .arg(cp.fx, 0, 'f', 2)
+                             .arg(cp.fy, 0, 'f', 2)
+                             .arg(cp.cx, 0, 'f', 2)
+                             .arg(cp.cy, 0, 'f', 2)
+                             .arg(cp.imageWidth)
+                             .arg(cp.imageHeight);
+        }
+    }
+
+    if (appliedCount == 0) {
         if (outSummary) *outSummary = QStringLiteral("JSON에서 카메라 내부 파라미터(fx, fy, cx, cy 등)를 찾을 수 없습니다.");
         return false;
     }
 
-    cp.enabled = true;
-    m_profiles.insert(channel, cp);
-
-    const QString summaryText = QString::fromUtf8("CH%1 카메라 내부 파라미터 적용 완료\n"
-                                                  "fx=%2, fy=%3, cx=%4, cy=%5\n"
-                                                  "해상도: %6x%7")
-                                    .arg(channel)
-                                    .arg(cp.fx, 0, 'f', 2)
-                                    .arg(cp.fy, 0, 'f', 2)
-                                    .arg(cp.cx, 0, 'f', 2)
-                                    .arg(cp.cy, 0, 'f', 2)
-                                    .arg(cp.imageWidth)
-                                    .arg(cp.imageHeight);
-    if (outSummary) *outSummary = summaryText;
+    if (outSummary) {
+        if (appliedCount == 1) {
+            *outSummary = QString::fromUtf8("카메라 내부 파라미터 적용 완료\n%1").arg(lastDetail);
+        } else {
+            *outSummary = QString::fromUtf8("총 %1개 채널 내부 파라미터 적용 완료\n마지막: %2").arg(appliedCount).arg(lastDetail);
+        }
+    }
     return true;
 }
 
@@ -396,72 +448,109 @@ bool SpatialProjector::loadManualExtrinsicData(const QByteArray &jsonData, int c
     }
 
     const QJsonObject root = doc.object();
-    QJsonObject ext = root.contains("extrinsic") && root.value("extrinsic").isObject()
-                          ? root.value("extrinsic").toObject()
-                          : root;
+    QList<int> targetChannels;
+    if (channel >= 1 && channel <= 4) {
+        targetChannels.append(channel);
+    } else {
+        // channel == 0 (전체 자동)
+        for (int ch = 1; ch <= 4; ++ch) {
+            if (root.contains(QString::number(ch))) targetChannels.append(ch);
+        }
+        if (targetChannels.isEmpty()) targetChannels.append(1);
+    }
 
-    bool haveR = false;
-    bool haveT = false;
-    double r[9] = {0};
-    double t[3] = {0};
+    int appliedCount = 0;
+    QString lastDetail;
 
-    // 1. rotation_matrix 파싱 (2D 또는 1D)
-    if (ext.contains("rotation_matrix") && ext.value("rotation_matrix").isArray()) {
-        const QJsonArray rMat = ext.value("rotation_matrix").toArray();
-        if (rMat.size() == 3 && rMat.at(0).isArray()) {
-            int idx = 0;
-            for (int row = 0; row < 3; ++row) {
-                const QJsonArray rRow = rMat.at(row).toArray();
-                for (int col = 0; col < 3 && col < rRow.size(); ++col) {
-                    r[idx++] = rRow.at(col).toDouble();
+    for (int ch : targetChannels) {
+        QJsonObject target = root;
+        if (root.contains(QString::number(ch)) && root.value(QString::number(ch)).isObject()) {
+            target = root.value(QString::number(ch)).toObject();
+        }
+
+        QJsonObject ext = target.contains("extrinsic") && target.value("extrinsic").isObject()
+                              ? target.value("extrinsic").toObject()
+                              : target;
+
+        bool haveR = false;
+        bool haveT = false;
+        double r[9] = {0};
+        double t[3] = {0};
+
+        if (ext.contains("rotation_matrix") && ext.value("rotation_matrix").isArray()) {
+            const QJsonArray rMat = ext.value("rotation_matrix").toArray();
+            if (rMat.size() == 3 && rMat.at(0).isArray()) {
+                int idx = 0;
+                for (int row = 0; row < 3; ++row) {
+                    const QJsonArray rRow = rMat.at(row).toArray();
+                    for (int col = 0; col < 3 && col < rRow.size(); ++col) {
+                        r[idx++] = rRow.at(col).toDouble();
+                    }
                 }
+                if (idx == 9) haveR = true;
+            } else if (rMat.size() == 9) {
+                for (int i = 0; i < 9; ++i) r[i] = rMat.at(i).toDouble();
+                haveR = true;
             }
-            if (idx == 9) haveR = true;
-        } else if (rMat.size() == 9) {
-            for (int i = 0; i < 9; ++i) r[i] = rMat.at(i).toDouble();
-            haveR = true;
+        } else if (ext.contains("r") && ext.value("r").isArray()) {
+            const QJsonArray rArr = ext.value("r").toArray();
+            if (rArr.size() == 9) {
+                for (int i = 0; i < 9; ++i) r[i] = rArr.at(i).toDouble();
+                haveR = true;
+            }
         }
-    } else if (ext.contains("r") && ext.value("r").isArray()) {
-        const QJsonArray rArr = ext.value("r").toArray();
-        if (rArr.size() == 9) {
-            for (int i = 0; i < 9; ++i) r[i] = rArr.at(i).toDouble();
-            haveR = true;
+
+        QString tKey;
+        if (ext.contains("translation_m")) tKey = QStringLiteral("translation_m");
+        else if (ext.contains("translation_vector")) tKey = QStringLiteral("translation_vector");
+        else if (ext.contains("t")) tKey = QStringLiteral("t");
+
+        if (!tKey.isEmpty() && ext.value(tKey).isArray()) {
+            const QJsonArray tArr = ext.value(tKey).toArray();
+            if (tArr.size() == 3) {
+                for (int i = 0; i < 3; ++i) t[i] = tArr.at(i).toDouble();
+                haveT = true;
+            }
+        }
+
+        if (haveR && haveT) {
+            ExtrinsicRt rt;
+            for (int i = 0; i < 9; ++i) rt.r[i] = r[i];
+            for (int i = 0; i < 3; ++i) rt.t[i] = t[i];
+            rt.valid = true;
+            m_manualRts.insert(ch, rt);
+
+            CameraProfile cp = profile(ch);
+            cp.channel = ch;
+            for (int i = 0; i < 9; ++i) cp.r[i] = r[i];
+            for (int i = 0; i < 3; ++i) cp.t[i] = t[i];
+            cp.enabled = true;
+            m_profiles.insert(ch, cp);
+
+            ++appliedCount;
+            lastDetail = QString::fromUtf8("CH%1: t = [%2, %3, %4] m")
+                             .arg(ch)
+                             .arg(t[0], 0, 'f', 4)
+                             .arg(t[1], 0, 'f', 4)
+                             .arg(t[2], 0, 'f', 4);
         }
     }
 
-    // 2. translation_m 또는 t 또는 translation_vector 파싱
-    QString tKey;
-    if (ext.contains("translation_m")) tKey = QStringLiteral("translation_m");
-    else if (ext.contains("translation_vector")) tKey = QStringLiteral("translation_vector");
-    else if (ext.contains("t")) tKey = QStringLiteral("t");
-
-    if (!tKey.isEmpty() && ext.value(tKey).isArray()) {
-        const QJsonArray tArr = ext.value(tKey).toArray();
-        if (tArr.size() == 3) {
-            for (int i = 0; i < 3; ++i) t[i] = tArr.at(i).toDouble();
-            haveT = true;
-        }
-    }
-
-    if (!haveR || !haveT) {
+    if (appliedCount == 0) {
         if (outSummary) *outSummary = QStringLiteral("JSON에서 외부 파라미터(rotation_matrix 및 translation_m)를 찾을 수 없습니다.");
         return false;
     }
 
-    for (int i = 0; i < 9; ++i) m_manualR[i] = r[i];
-    for (int i = 0; i < 3; ++i) m_manualT[i] = t[i];
-    m_hasCustomManualRt = true;
-
     // 수동 RT 모드로 즉시 전환 및 적용
     setCalibrationMode(CalibrationMode::Manual);
 
-    const QString summaryText = QString::fromUtf8("Manual RT (외부 파라미터) 적용 완료\n"
-                                                  "t = [%1, %2, %3] m\n"
-                                                  "수동 RT 모드로 즉시 전환되었습니다.")
-                                    .arg(m_manualT[0], 0, 'f', 4)
-                                    .arg(m_manualT[1], 0, 'f', 4)
-                                    .arg(m_manualT[2], 0, 'f', 4);
-    if (outSummary) *outSummary = summaryText;
+    if (outSummary) {
+        if (appliedCount == 1) {
+            *outSummary = QString::fromUtf8("Manual RT 적용 완료\n%1\n수동 RT 모드로 즉시 전환되었습니다.").arg(lastDetail);
+        } else {
+            *outSummary = QString::fromUtf8("총 %1개 채널 Manual RT 적용 완료\n%2\n수동 RT 모드로 즉시 전환되었습니다.").arg(appliedCount).arg(lastDetail);
+        }
+    }
     return true;
 }
 

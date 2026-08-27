@@ -36,11 +36,11 @@ signals:
     void themeChangeRequested(Theme::Mode mode);
     void demoModeToggled(bool enabled);
     void calibModeToggled(bool manual);
-    void loadManualRtRequested();
+    void loadManualRtRequested(int channel = 0);
     void cameraSettingsRequested();
     void cameraReconnectRequested();
     void sensorHeightRequested();
-    void loadIntrinsicProfileRequested();
+    void loadIntrinsicProfileRequested(int channel = 0);
     void logoutRequested();
 
 private:

@@ -6,6 +6,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
@@ -46,6 +47,21 @@ SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) 
     connect(m_demo, &QCheckBox::toggled, this, &SettingsTab::demoModeToggled);
     root->addWidget(m_demo);
 
+    // 채널 선택 팝업 메뉴 생성 람다
+    auto createChannelMenu = [this](QWidget *parent, auto signal) {
+        auto *menu = new QMenu(parent);
+        for (int ch = 1; ch <= 4; ++ch) {
+            menu->addAction(QStringLiteral("CH%1 (센서 %2) 에 적용").arg(ch).arg(ch - 1), this, [this, signal, ch] {
+                emit (this->*signal)(ch);
+            });
+        }
+        menu->addSeparator();
+        menu->addAction(QStringLiteral("파일 내 정의 채널 전체 자동 적용"), this, [this, signal] {
+            emit (this->*signal)(0);
+        });
+        return menu;
+    };
+
     // 캘리브레이션 RT 모드 전환 스위치 및 Manual RT 첨부 버튼
     auto *manualRtLayout = new QHBoxLayout;
     m_manualCalib = new QCheckBox(QStringLiteral("Manual RT 사용 (체크 해제 시 Automatic RT 사용)"), this);
@@ -56,9 +72,9 @@ SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) 
     });
     manualRtLayout->addWidget(m_manualCalib);
 
-    auto *btnAttachManualRt = new QPushButton(QStringLiteral("Manual RT 첨부..."), this);
+    auto *btnAttachManualRt = new QPushButton(QStringLiteral("Manual RT 첨부 ▾"), this);
     btnAttachManualRt->setFixedHeight(26);
-    connect(btnAttachManualRt, &QPushButton::clicked, this, &SettingsTab::loadManualRtRequested);
+    btnAttachManualRt->setMenu(createChannelMenu(btnAttachManualRt, &SettingsTab::loadManualRtRequested));
     manualRtLayout->addWidget(btnAttachManualRt);
     manualRtLayout->addStretch(1);
     root->addLayout(manualRtLayout);
@@ -73,7 +89,12 @@ SettingsTab::SettingsTab(const State &state, QWidget *parent) : QWidget(parent) 
     addButton(QStringLiteral("카메라 설정"), &SettingsTab::cameraSettingsRequested);
     addButton(QStringLiteral("CCTV 재연결"), &SettingsTab::cameraReconnectRequested);
     addButton(QStringLiteral("센서 높이"), &SettingsTab::sensorHeightRequested);
-    addButton(QStringLiteral("카메라 내부 파라미터 불러오기"), &SettingsTab::loadIntrinsicProfileRequested);
+
+    auto *btnLoadIntrinsic = new QPushButton(QStringLiteral("카메라 내부 파라미터 불러오기 ▾"), this);
+    btnLoadIntrinsic->setFixedHeight(30);
+    btnLoadIntrinsic->setMenu(createChannelMenu(btnLoadIntrinsic, &SettingsTab::loadIntrinsicProfileRequested));
+    buttons->addWidget(btnLoadIntrinsic);
+
     buttons->addStretch(1);
     root->addLayout(buttons);
 
