@@ -295,7 +295,23 @@ void MqttBridge::handleStateDaemon(const QByteArray &payload) {
     s.curPanDdeg  = obj.value("cur_pan_ddeg").toInt(0);
     s.curTiltDdeg = obj.value("cur_tilt_ddeg").toInt(0);
     s.lastErr     = obj.value("last_err").toInt(0);
+    // 오류가 난 축(proto v6). 비트 플래그다 — 1=팬(bit0) / 2=틸트(bit1) / 3=양축.
+    s.lastErrAxis = obj.value("last_err_axis").toInt(0);
     s.ts          = tsFromUnixSeconds(static_cast<qint64>(obj.value("ts").toDouble()));
+
+    // STM32 진단 카운터(proto v6). level 과 마찬가지로 중첩 객체다:
+    //   "diag": { "valid": true, "tx_fail": 0, "rx_ovf": 0, ... }
+    // 구버전 데몬/펌웨어면 이 객체가 통째로 없어 valid=false 로 남는다 —
+    // 그게 맞는 동작이다. valid=false 는 "모른다"이지 "정상"이 아니다.
+    const auto diagObj = obj.value("diag").toObject();
+    if (!diagObj.isEmpty()) {
+        s.diag.valid      = diagObj.value("valid").toBool(false);
+        s.diag.txFail     = diagObj.value("tx_fail").toVariant().toUInt();
+        s.diag.rxOvf      = diagObj.value("rx_ovf").toVariant().toUInt();
+        s.diag.encRetry   = diagObj.value("enc_retry").toVariant().toUInt();
+        s.diag.lidarDrop  = diagObj.value("lidar_drop").toVariant().toUInt();
+        s.diag.rejectBusy = diagObj.value("reject_busy").toVariant().toUInt();
+    }
 
     // 수평은 중첩된 "level" 블록으로 온다 — 계약 §4.1, 실구현은
     // daemon/modules/mqtt/mqtt_module.c 의 state_json():
