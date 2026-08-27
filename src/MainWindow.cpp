@@ -892,12 +892,20 @@ void MainWindow::downloadCalibrationResult(const QString &sessionId,
             return;
         }
 
+        // 캘리브레이션 결과 자동 적용
+        QString summary;
+        bool applied = SpatialProjector::instance().loadCalibrationResultData(responseData, 1, &summary);
+
         appendLog("CALIB", QString::fromUtf8("CCTV 캘리브레이션 결과 다운로드 완료: %1 -> %2")
                                .arg(sessionId, savePath));
-        QMessageBox::information(this,
-                                 QString::fromUtf8("다운로드 완료"),
-                                 QString::fromUtf8("캘리브레이션 결과를 저장했습니다.\n\n%1")
-                                     .arg(savePath));
+
+        QString msg = QString::fromUtf8("캘리브레이션 결과를 저장했습니다.\n\n%1").arg(savePath);
+        if (applied) {
+            msg += QString::fromUtf8("\n\n✅ 3D/2D Top-View 에 즉시 적용되었습니다:\n%1").arg(summary);
+            if (m_topView) m_topView->update();
+        }
+
+        QMessageBox::information(this, QString::fromUtf8("다운로드 및 적용 완료"), msg);
     });
 }
 

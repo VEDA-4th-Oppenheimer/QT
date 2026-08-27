@@ -13,6 +13,8 @@ extern "C" {
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDateTime>
+#include <QTimer>
 #include <utility>
 
 namespace {
@@ -23,6 +25,9 @@ RtspSource::RtspSource(QObject *parent) : QObject(parent) {
 #ifdef USE_FFMPEG
     av_log_set_level(AV_LOG_ERROR);
 #endif
+    m_flushTimer = new QTimer(this);
+    connect(m_flushTimer, &QTimer::timeout, this, &RtspSource::onFlushTimer);
+    m_flushTimer->start(100);
 }
 
 RtspSource::~RtspSource() {
@@ -30,13 +35,14 @@ RtspSource::~RtspSource() {
 }
 
 void RtspSource::stopAll() {
+    if (m_flushTimer) m_flushTimer->stop();
     for (auto *d : std::as_const(m_decoders)) d->stop();
     for (auto *d : std::as_const(m_decoders)) { d->wait(3000); delete d; }
     m_decoders.clear();
     m_gaveUp.clear();
     m_metadataBuffers.clear();
-    if (!m_objectsByChannel.isEmpty()) {
-        m_objectsByChannel.clear();
+    if (!m_cachedObjectsByChannel.isEmpty()) {
+        m_cachedObjectsByChannel.clear();
         m_metadataLogSeen.clear();
         emit objectsUpdated({});
     }
@@ -110,6 +116,41 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
     emit logLine("RTSP", QString("채널 %1개 시작 (%2)").arg(m_decoders.size()).arg(origin));
 }
 
+void RtspSource::onFlushTimer() {
+    flushExpired(QDateTime::currentMSecsSinceEpoch());
+}
+
+void RtspSource::emitMergedObjects() {
+    QVector<SpatialObject> all;
+    for (auto itCh = m_cachedObjectsByChannel.cbegin(); itCh != m_cachedObjectsByChannel.cend(); ++itCh) {
+        for (auto itObj = itCh.value().cbegin(); itObj != itCh.value().cend(); ++itObj) {
+            all.push_back(itObj.value().object);
+        }
+    }
+    emit objectsUpdated(all);
+}
+
+void RtspSource::flushExpired(qint64 nowMs) {
+    if (nowMs <= 0) nowMs = QDateTime::currentMSecsSinceEpoch();
+    bool changed = false;
+
+    for (auto itCh = m_cachedObjectsByChannel.begin(); itCh != m_cachedObjectsByChannel.end(); ++itCh) {
+        auto &objMap = itCh.value();
+        for (auto itObj = objMap.begin(); itObj != objMap.end();) {
+            if (nowMs - itObj.value().lastSeenMs > m_cacheTtlMs) {
+                itObj = objMap.erase(itObj);
+                changed = true;
+            } else {
+                ++itObj;
+            }
+        }
+    }
+
+    if (changed) {
+        emitMergedObjects();
+    }
+}
+
 void RtspSource::ingestMetadataPayload(int channel, const QByteArray &payload) {
     if (channel < 1 || channel > 4 || payload.isEmpty()) return;
 
@@ -131,21 +172,43 @@ void RtspSource::ingestMetadataPayload(int channel, const QByteArray &payload) {
 
     if (!parsed.objects.isEmpty() || parsed.recognized) {
         m_metadataBuffers.remove(channel);
-        m_objectsByChannel[channel] = parsed.objects;
-        QVector<SpatialObject> all;
-        for (auto it = m_objectsByChannel.cbegin(); it != m_objectsByChannel.cend(); ++it)
-            all += it.value();
-        emit objectsUpdated(all);
+
+        // 빈 프레임(예: {} 또는 객체 0개)이 명시적으로 온 경우 해당 채널 캐시 즉시 비움
+        if (parsed.objects.isEmpty()) {
+            if (!m_cachedObjectsByChannel[channel].isEmpty()) {
+                m_cachedObjectsByChannel[channel].clear();
+                emitMergedObjects();
+            }
+            return;
+        }
+
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        int newAdded = 0;
+        for (const SpatialObject &obj : parsed.objects) {
+            QString key = obj.id.trimmed();
+            if (key.isEmpty()) {
+                key = QStringLiteral("%1_%2_%3").arg(channel)
+                          .arg(obj.posM.x(), 0, 'f', 2)
+                          .arg(obj.posM.y(), 0, 'f', 2);
+            }
+            m_cachedObjectsByChannel[channel][key] = { obj, now };
+            ++newAdded;
+        }
+
+        // 500ms 만료된 오래된 객체 정리 후 전체 병합 목록 전송
+        flushExpired(now);
+        emitMergedObjects();
 
         if (!m_metadataLogSeen.contains(channel)) {
             m_metadataLogSeen.insert(channel);
             int topViewCount = 0;
-            for (const SpatialObject &object : parsed.objects) {
-                if (object.hasTopViewPosition()) ++topViewCount;
+            for (const auto &item : m_cachedObjectsByChannel[channel]) {
+                if (item.object.hasTopViewPosition()) ++topViewCount;
             }
-            emit logLine("OBJECT", QString("CH%1 RTSP metadata 수신 — %2개 객체 (%3개 Top-View)")
+            emit logLine("OBJECT", QString("CH%1 RTSP metadata 수신 — %2개 객체 (활성 캐시 %3개, Top-View %4개)")
                                          .arg(channel)
-                                         .arg(parsed.objects.size())
+                                         .arg(newAdded)
+                                         .arg(m_cachedObjectsByChannel[channel].size())
                                          .arg(topViewCount));
         }
     } else {

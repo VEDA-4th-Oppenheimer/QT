@@ -3,10 +3,12 @@
 #include <QCoreApplication>
 #include <QDebug>
 
+#include <iostream>
+
 namespace {
 void require(bool condition, const char *message) {
     if (!condition) {
-        qCritical("rtsp_metadata_source_tests: %s", message);
+        std::cerr << "rtsp_metadata_source_tests FAILED: " << message << std::endl;
         std::exit(1);
     }
 }
@@ -43,10 +45,10 @@ int main(int argc, char **argv) {
 
     source.ingestMetadataPayload(2, QByteArrayLiteral(
         R"({"coordinate_frame":"image","objects":[
-            {"id":"pixel-only","class":"person","bbox":{"left":0.1,"top":0.2,"right":0.3,"bottom":0.4}}
+            {"id":"ch2-p1","class":"person","bbox":{"left":0.1,"top":0.2,"right":0.3,"bottom":0.4}}
         ]})"));
     require(updateCount == 3 && latest.size() == 2,
-            "image-only frame did not replace the previous CH2 frame");
+            "image-only frame did not update the previous CH2 object");
     int topViewCount = 0;
     int unprojectedCount = 0;
     for (const SpatialObject &object : latest) {
@@ -87,6 +89,43 @@ int main(int argc, char **argv) {
                 && latest.last().hasTopViewPosition(),
             "assembled CH4 XML object was not retained");
 
-    qInfo() << "rtsp_metadata_source_tests: PASS";
+    // --- 4명 동시 감지 (RTP 분할 패킷 2개로 나뉘어 도착하는 상황 검증) ---
+    // 먼저 CH1 을 빈 프레임으로 초기화
+    source.ingestMetadataPayload(1, QByteArrayLiteral("{}"));
+
+    // 패킷 1: 객체 1번, 2번
+    const QByteArray pkt1 = QByteArrayLiteral(
+        R"({"coordinate_frame":"top_view_m","objects":[
+            {"id":"p1","class":"person","x_m":1.0,"y_m":2.0},
+            {"id":"p2","class":"person","x_m":2.0,"y_m":3.0}
+        ]})");
+    // 패킷 2: 객체 3번, 4번
+    const QByteArray pkt2 = QByteArrayLiteral(
+        R"({"coordinate_frame":"top_view_m","objects":[
+            {"id":"p3","class":"person","x_m":3.0,"y_m":4.0},
+            {"id":"p4","class":"person","x_m":4.0,"y_m":5.0}
+        ]})");
+
+    source.ingestMetadataPayload(1, pkt1);
+    source.ingestMetadataPayload(1, pkt2);
+
+    int ch1Count = 0;
+    for (const auto &obj : latest) {
+        if (obj.channel == 1) ++ch1Count;
+    }
+    require(ch1Count == 4, "CH1 did not merge 4 persons across split packets!");
+
+    // --- 500ms TTL 만료 플러시 검증 ---
+    // 현재 시각보다 600ms 뒤 시각으로 강제 flush
+    const qint64 futureMs = QDateTime::currentMSecsSinceEpoch() + 600;
+    source.flushExpired(futureMs);
+
+    ch1Count = 0;
+    for (const auto &obj : latest) {
+        if (obj.channel == 1) ++ch1Count;
+    }
+    require(ch1Count == 0, "Expired objects were not flushed after 500ms TTL!");
+
+    qInfo() << "rtsp_metadata_source_tests: PASS (including 4-person merge and 500ms TTL flush)";
     return 0;
 }
