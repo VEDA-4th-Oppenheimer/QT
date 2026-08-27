@@ -114,6 +114,11 @@ private:
     QVector<SpatialObject> m_lastObjects;
     bool m_haveDaemonState = false, m_haveImu = false, m_haveProgress = false, m_haveResult = false;
     bool m_haveCloud = false, m_haveObjects = false;
+    // 이번 실행에서 사용자가 스캔을 걸었는지. adts/state/scan 은 retained 라
+    // 접속하자마자 지난 스캔 결과가 그대로 배달된다 — 그걸 자동으로 받아 깔면
+    // 앱을 켜자마자 TOP-VIEW 에 예전 점군이 떠 있다. 사용자가 스캔을 돌렸을
+    // 때만 자동 표시하고, 그 전에는 파일을 직접 고르게 한다.
+    bool m_scanRequestedThisRun = false;
     bool m_rtspMetadataActive = false;
     // 브로커 연결 상태도 캐싱해야 한다 — 연결이 유지되는 동안에는 신호가 다시
     // 오지 않아서, 테마 전환으로 TopBar 를 새로 만들면 생성자 기본값

@@ -111,6 +111,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_scanFetcher, &ScanFetcher::cloudReady, this, [this](const ScanCloud &c) {
         m_lastCloud = c; m_haveCloud = true;
         m_topView->setScanCloud(c);
+        // 점군이 생겼으니 그동안 보류해 둔 사람 마커를 이제 올린다.
+        if (m_haveObjects) m_topView->setObjects(m_lastObjects);
         if (c.xMax > c.xMin && c.zMax > c.zMin) {
             SpatialProjector::instance().setRoomBounds(c.xMin, c.xMax, c.zMin, c.zMax);
         }
@@ -269,7 +271,16 @@ void MainWindow::rebuildUi() {
             // 스캔이 끝나면 .pcd 를 받아 Top-View 에 자동으로 깐다. 계약 §9 가
             // 미결이라 경로만 오므로, 로컬에 있으면 그걸 쓰고 없으면 발급
             // 서비스(8443)의 GET /scan 으로 받는다 — ScanFetcher 참고.
-            if (r.ok && !r.pcdPath.isEmpty()) m_scanFetcher->fetch(r.pcdPath);
+            // retained 라 접속 즉시 지난 결과가 온다. 이번 실행에서 스캔을 건
+            // 적이 없으면 받아오지 않는다 — 앱을 켜자마자 예전 점군이 깔리는 걸
+            // 막는다. 이 경우 파일을 직접 고르면(스캔 파일 열기 / 목록) 뜬다.
+            if (!m_scanRequestedThisRun) {
+                appendLog("EXPORT", QString::fromUtf8(
+                    "지난 스캔 결과가 있습니다 (%1) — 자동으로 열지 않습니다. "
+                    "TOP-VIEW 의 스캔 파일 열기로 불러오세요.").arg(r.pcdPath));
+            } else if (r.ok && !r.pcdPath.isEmpty()) {
+                m_scanFetcher->fetch(r.pcdPath);
+            }
         });
         connect(src, &DataBridge::kitErrorReceived, this, [this](const KitError &e) {
             appendLog("ERROR", QString("[%1] %2 %3").arg(e.code).arg(e.name, e.msg));
@@ -280,7 +291,10 @@ void MainWindow::rebuildUi() {
             if (src == static_cast<DataBridge *>(m_demo) && m_rtspMetadataActive) return;
             m_lastObjects = objects;
             m_haveObjects = true;
-            m_topView->setObjects(objects);
+            // 사람 마커는 점군 위에서만 의미가 있다 — 스캔 파일을 고르기 전에는
+            // 빈 지도에 사람만 떠 있게 되므로 넘기지 않는다. 값은 위에 보관해
+            // 두었다가 점군이 깔릴 때 한꺼번에 올린다(cloudReady 참고).
+            if (m_haveCloud) m_topView->setObjects(objects);
             for (auto *t : m_tiles) t->setDetectedObjects(objects);
         });
         connect(src, &DataBridge::mapEdgesUpdated, m_topView, &TopViewPanel::setEdges);
@@ -313,7 +327,7 @@ void MainWindow::rebuildUi() {
         m_rtspMetadataActive = true;
         m_lastObjects = objects;
         m_haveObjects = true;
-        m_topView->setObjects(objects);
+        if (m_haveCloud) m_topView->setObjects(objects);   // 위와 같은 이유
         for (auto *t : m_tiles) t->setDetectedObjects(objects);
     });
 
@@ -332,6 +346,7 @@ void MainWindow::rebuildUi() {
     // .pcd 헤더에 sensor_height_m 주석으로만 실린다 — 소비자가 바닥평면을 잡거나
     // 다른 좌표계로 옮길 때 쓴다. 0 은 "모름". 모드 → 센서 높이 설정… 에서 바꾼다.
     connect(m_topBar, &TopBar::scanRequested, this, [this, tabs] {
+        m_scanRequestedThisRun = true;   // 이제부터 오는 state/scan 은 자동으로 깐다
         (m_demoMode ? static_cast<DataBridge *>(m_demo) : static_cast<DataBridge *>(m_mqtt))
             ->requestScan(0, 1791, -900, 900, 9, m_sensorHeightMm);
         tabs->setCurrentIndex(1);
@@ -373,7 +388,9 @@ void MainWindow::rebuildUi() {
         m_calibTab->setScanResult(m_lastResult);
     }
     if (m_haveCloud) m_topView->setScanCloud(m_lastCloud);
-    if (m_haveObjects) m_topView->setObjects(m_lastObjects);
+    // 점군이 없으면 사람 마커도 올리지 않는다 — 위 objectsUpdated 와 같은 규칙이라
+    // 테마 전환으로 위젯이 갈려도 화면이 달라지지 않는다.
+    if (m_haveCloud && m_haveObjects) m_topView->setObjects(m_lastObjects);
 
     // TOP-VIEW 패널의 데이터 열기 및 화면 전환 시그널 연결
     connect(m_topView, &TopViewPanel::openScanFileRequested, this, &MainWindow::openScanFile);

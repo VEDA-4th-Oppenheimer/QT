@@ -227,6 +227,24 @@ bool EnrollDialog::installBundle(const QJsonObject &o, QString *err) {
         return true;
     };
 
+    // 재등록이면 이전 발급물이 남아 있다. 특히 qt-console.key(PKCS#8)가
+    // 문제인데, 서버는 그 이름으로 내려주지 않으므로 여기서 덮이지 않고
+    // 살아남는다. 그런데 MqttBridge 는 **그 파일이 있으면 우선 선택**한다
+    // (qt-console-trad.key 는 폴백이다). 결과적으로
+    //     qt-console.crt      새 인증서
+    //     qt-console.key      옛 개인키    ← 선택됨
+    // 짝이 안 맞는 조합이 되어, Paho 가 TCP 연결 전 SSL 컨텍스트를 만들 때
+    // 키/인증서 불일치로 실패한다. 소켓을 아예 안 열기 때문에 브로커 로그에는
+    // 접속 시도조차 남지 않아, 네트워크 문제로 오해하기 쉽다. 실기에서 겪었다.
+    //
+    // 그래서 새로 쓰기 전에 이전 발급물을 지운다. 남겨서 얻을 것이 없다.
+    for (const QString &stale : { QStringLiteral("/qt-console.key"),
+                                  QStringLiteral("/qt-console-trad.key"),
+                                  QStringLiteral("/qt-console.crt"),
+                                  QStringLiteral("/ca.crt") }) {
+        QFile::remove(certDir + stale);
+    }
+
     struct Item { const char *key; QString path; bool secret; };
     const QList<Item> certs = {
         { "ca_crt",     certDir + QStringLiteral("/ca.crt"),              false },

@@ -295,17 +295,43 @@ void MqttBridge::handleStateDaemon(const QByteArray &payload) {
     s.curPanDdeg  = obj.value("cur_pan_ddeg").toInt(0);
     s.curTiltDdeg = obj.value("cur_tilt_ddeg").toInt(0);
     s.lastErr     = obj.value("last_err").toInt(0);
+    // 오류가 난 축(proto v6). 비트 플래그다 — 1=팬(bit0) / 2=틸트(bit1) / 3=양축.
+    s.lastErrAxis = obj.value("last_err_axis").toInt(0);
     s.ts          = tsFromUnixSeconds(static_cast<qint64>(obj.value("ts").toDouble()));
 
-    const auto rollVal = obj.value("imu_roll");
-    const auto pitchVal = obj.value("imu_pitch");
-    if (!rollVal.isUndefined() && !pitchVal.isUndefined()) {
-        s.level.roll  = rollVal.toDouble();
-        s.level.pitch = pitchVal.toDouble();
-        s.level.valid = true;
+    // STM32 진단 카운터(proto v6). level 과 마찬가지로 중첩 객체다:
+    //   "diag": { "valid": true, "tx_fail": 0, "rx_ovf": 0, ... }
+    // 구버전 데몬/펌웨어면 이 객체가 통째로 없어 valid=false 로 남는다 —
+    // 그게 맞는 동작이다. valid=false 는 "모른다"이지 "정상"이 아니다.
+    const auto diagObj = obj.value("diag").toObject();
+    if (!diagObj.isEmpty()) {
+        s.diag.valid      = diagObj.value("valid").toBool(false);
+        s.diag.txFail     = diagObj.value("tx_fail").toVariant().toUInt();
+        s.diag.rxOvf      = diagObj.value("rx_ovf").toVariant().toUInt();
+        s.diag.encRetry   = diagObj.value("enc_retry").toVariant().toUInt();
+        s.diag.lidarDrop  = diagObj.value("lidar_drop").toVariant().toUInt();
+        s.diag.rejectBusy = diagObj.value("reject_busy").toVariant().toUInt();
+    }
+
+    // 수평은 중첩된 "level" 블록으로 온다 — 계약 §4.1, 실구현은
+    // daemon/modules/mqtt/mqtt_module.c 의 state_json():
+    //   "level": { "valid": true, "roll_deg": .., "pitch_deg": .. }
+    // 예전 평면 키(imu_roll/imu_pitch)를 읽고 있었는데 그런 키는 오지 않아서
+    // level.valid 가 늘 false 로 남았고, 화면에는 IMU 가 N/A 로만 떴다.
+    const auto levelObj = obj.value("level").toObject();
+    if (!levelObj.isEmpty()) {
+        s.level.roll  = levelObj.value("roll_deg").toDouble();
+        s.level.pitch = levelObj.value("pitch_deg").toDouble();
+        // 데몬이 valid=false 로 보내면(아직 측정 전·IMU 미부착) 그대로 따른다.
+        // 여기서 true 로 덮으면 roll=0/pitch=0 이 "수평 정상"으로 초록색이 된다.
+        s.level.valid = levelObj.value("valid").toBool(false);
     }
 
     emit daemonStateUpdated(s);
+    // IMU 위젯(TopBar·TOP-VIEW·DEVICES·기울기 배너)은 daemonStateUpdated 가 아니라
+    // imuUpdated 를 듣는다. 데모 쪽만 이걸 쏘고 있어서 실접속에서는 수평이 영영
+    // 갱신되지 않았다 — state/daemon 에 값이 실려 와도 마찬가지였다.
+    emit imuUpdated(s.level);
 }
 
 void MqttBridge::handleStateScan(const QByteArray &payload) {
