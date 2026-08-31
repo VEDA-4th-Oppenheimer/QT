@@ -376,6 +376,38 @@ void testCameraConfigProfileSwitching() {
     std::cout << "[PASS] testCameraConfigProfileSwitching: buildChannels defaults to profile4, setUrlProfile switches dynamically!\n";
 }
 
+void testHwCapabilityDetectionAndSmartProfiles() {
+    CameraConfig::HwCapability cap = CameraConfig::detectHwCapability();
+    std::cout << "[INFO] Detected HW Capability: " << cap.description.toStdString() 
+              << " (device: " << cap.hwDeviceName.toStdString() 
+              << ", codec: " << cap.codecName.toStdString() 
+              << ", grid: profile" << cap.gridProfile 
+              << ", solo: profile" << cap.soloProfile << ")\n";
+
+    if (cap.mode == CameraConfig::DecoderMode::GpuHevc) {
+        assert(cap.gridProfile == 5);
+        assert(cap.soloProfile == 3);
+        assert(cap.codecName == "hevc");
+    } else if (cap.mode == CameraConfig::DecoderMode::GpuH264) {
+        assert(cap.gridProfile == 4);
+        assert(cap.soloProfile == 2);
+        assert(cap.codecName == "h264");
+    } else {
+        assert(cap.gridProfile == 4);
+        assert(cap.soloProfile == 2);
+        assert(cap.hwDeviceName == "none");
+    }
+
+    // URL 동적 전환 검증 (H.265 5 <-> 3 및 H.264 4 <-> 2)
+    QString raw = "rtsp://admin:5hanwha!@172.20.32.43:554/0/profile4/media.smp";
+    QString gridUrl = CameraConfig::setUrlProfile(raw, cap.gridProfile);
+    QString soloUrl = CameraConfig::setUrlProfile(gridUrl, cap.soloProfile);
+    assert(gridUrl.contains(QString("/profile%1/").arg(cap.gridProfile)));
+    assert(soloUrl.contains(QString("/profile%1/").arg(cap.soloProfile)));
+
+    std::cout << "[PASS] testHwCapabilityDetectionAndSmartProfiles: hardware capability detected and smart profiles verified successfully!\n";
+}
+
 int main() {
     testSpatialProjectorCH1();
     testSpatialMetadataOnvifWithProjection();
@@ -386,6 +418,7 @@ int main() {
     testPerChannelLoading();
     testMultiChannelRejectedSessionParsing();
     testCameraConfigProfileSwitching();
+    testHwCapabilityDetectionAndSmartProfiles();
     std::cout << "All spatial projection & RTSP profile tests PASS!\n";
     return 0;
 }

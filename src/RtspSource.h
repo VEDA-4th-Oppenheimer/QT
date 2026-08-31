@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QVector>
 #include "Models.h"
+#include "CameraConfig.h"
 
 class RtspDecoder;
 
@@ -18,6 +19,8 @@ class RtspSource : public QObject {
 public:
     explicit RtspSource(QObject *parent = nullptr);
     ~RtspSource() override;
+
+    CameraConfig::HwCapability hwCapability() const { return m_hwCap; }
 
     void loadConfigAndStart(const QString &path = QStringLiteral("config/cameras.json"));
 
@@ -74,4 +77,5 @@ private:
     QTimer                  *m_flushTimer = nullptr;
     qint64                   m_cacheTtlMs = kDefaultTtlMs;
     int                      m_currentSoloChannel = 0;
+    CameraConfig::HwCapability m_hwCap;
 };

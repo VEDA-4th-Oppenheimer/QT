@@ -26,6 +26,7 @@ RtspSource::RtspSource(QObject *parent) : QObject(parent) {
 #ifdef USE_FFMPEG
     av_log_set_level(AV_LOG_ERROR);
 #endif
+    m_hwCap = CameraConfig::detectHwCapability();
     m_flushTimer = new QTimer(this);
     connect(m_flushTimer, &QTimer::timeout, this, &RtspSource::onFlushTimer);
     m_flushTimer->start(100);
@@ -51,7 +52,7 @@ void RtspSource::stopAll() {
 
 void RtspSource::reconnectAll() {
     if (m_applied.isEmpty()) {
-        emit logLine("RTSP", QString::fromUtf8("설정된 카메라 채널이 없습니다 — '카메라 설정' 에서 IP 를 먼저 입력하세요."));
+        loadConfigAndStart();
         return;
     }
     const QJsonObject cfg = m_applied;
@@ -69,20 +70,24 @@ void RtspSource::setSoloChannel(int channel) {
         dec->setFullResolution(solo);
 
         const QString curUrl = dec->url();
-        const QString targetUrl = CameraConfig::setUrlProfile(curUrl, solo ? 2 : 4);
+        const int targetProfile = solo ? m_hwCap.soloProfile : m_hwCap.gridProfile;
+        const QString targetUrl = CameraConfig::setUrlProfile(curUrl, targetProfile);
         if (curUrl != targetUrl) {
             dec->setUrl(targetUrl);
-            emit logLine("RTSP", QString("CH%1 프로파일 전환: %2 -> %3 (%4)")
+            emit logLine("RTSP", QString("CH%1 프로파일 전환: profile%2 -> profile%3 (%4, 코덱: %5)")
                                      .arg(ch)
-                                     .arg(solo ? QStringLiteral("profile4") : QStringLiteral("profile2"))
-                                     .arg(solo ? QStringLiteral("profile2") : QStringLiteral("profile4"))
-                                     .arg(solo ? QStringLiteral("1채널 확대 2592x1520 원본 모드") : QStringLiteral("2x2 분할 서브스트림 모드")));
+                                     .arg(solo ? m_hwCap.gridProfile : m_hwCap.soloProfile)
+                                     .arg(targetProfile)
+                                     .arg(solo ? QStringLiteral("1채널 확대 2592x1520 원본 모드") : QStringLiteral("2x2 분할 서브스트림 모드"))
+                                     .arg(m_hwCap.codecName.toUpper()));
         }
     }
 }
 
 void RtspSource::loadConfigAndStart(const QString &path) {
     SpatialProjector::instance().loadProfiles(resolveConfigPath("config/calibration_profiles.json"));
+
+    emit logLine("RTSP", QString("디코더 하드웨어 가속 프로빙: %1").arg(m_hwCap.description));
 
     QFile f(resolveConfigPath(path));
     if (!f.open(QIODevice::ReadOnly)) {
@@ -115,10 +120,14 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
 
     for (auto it = channels.begin(); it != channels.end(); ++it) {
         const int ch = it.key().toInt();
-        const QString url = it.value().toString();
-        if (ch < 1 || ch > 4 || url.isEmpty()) continue;
+        const QString rawUrl = it.value().toString();
+        if (ch < 1 || ch > 4 || rawUrl.isEmpty()) continue;
 
-        auto *dec = new RtspDecoder(ch, url, this);
+        // 감지된 하드웨어 가속 프로파일(H.265 profile5 / H.264 profile4)로 URL 조정
+        const QString targetUrl = CameraConfig::setUrlProfile(rawUrl, m_hwCap.gridProfile);
+
+        auto *dec = new RtspDecoder(ch, targetUrl, this);
+        dec->setHwAccel(m_hwCap.hwDeviceName);
         connect(dec, &RtspDecoder::frameReady, this, &RtspSource::frameReceived);
         connect(dec, &RtspDecoder::metadataReady, this,
                 [this](int channel, const QByteArray &payload) {
@@ -137,7 +146,8 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         return;
     }
     m_applied = channels;
-    emit logLine("RTSP", QString("채널 %1개 시작 (%2)").arg(m_decoders.size()).arg(origin));
+    emit logLine("RTSP", QString("채널 %1개 시작 (%2, %3)")
+                             .arg(m_decoders.size()).arg(origin).arg(m_hwCap.description));
 }
 
 void RtspSource::onFlushTimer() {

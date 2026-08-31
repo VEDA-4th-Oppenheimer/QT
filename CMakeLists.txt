@@ -131,11 +131,12 @@ if(WIN32)
                 "${CMAKE_CURRENT_SOURCE_DIR}/config"
                 "$<TARGET_FILE_DIR:spatial_vms>/config"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "C:/Qt/6.11.1/mingw_64/bin/avutil-59.dll"
-                "C:/Qt/6.11.1/mingw_64/bin/avcodec-61.dll"
-                "C:/Qt/6.11.1/mingw_64/bin/avformat-61.dll"
-                "C:/Qt/6.11.1/mingw_64/bin/swscale-8.dll"
-                "C:/Qt/6.11.1/mingw_64/bin/swresample-5.dll"
+                "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/bin/libavcodec-61.dll"
+                "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/bin/libavformat-61.dll"
+                "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/bin/libavutil-59.dll"
+                "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/bin/libswscale-8.dll"
+                "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/bin/libswresample-5.dll"
+                "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/bin/libbz2.dll"
                 "$<TARGET_FILE_DIR:spatial_vms>"
     )
 endif()
@@ -163,7 +164,18 @@ if(BUILD_TESTING)
         src/Models.h
     )
     target_include_directories(spatial_projection_tests PRIVATE src)
-    target_link_libraries(spatial_projection_tests PRIVATE Qt6::Core)
+    if(EXISTS "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include" AND EXISTS "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a")
+        target_compile_definitions(spatial_projection_tests PRIVATE USE_FFMPEG)
+        target_include_directories(spatial_projection_tests PRIVATE "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include")
+        target_link_libraries(spatial_projection_tests PRIVATE Qt6::Core
+            "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a"
+            "C:/Qt/6.11.1/mingw_64/bin/libavformat.dll.a"
+            "C:/Qt/6.11.1/mingw_64/bin/libavutil.dll.a"
+            "C:/Qt/6.11.1/mingw_64/bin/libswscale.dll.a"
+        )
+    else()
+        target_link_libraries(spatial_projection_tests PRIVATE Qt6::Core)
+    endif()
     add_test(NAME spatial_projection_tests COMMAND spatial_projection_tests)
 
     if(TARGET PkgConfig::FFMPEG OR (EXISTS "C:/PROGRA~1/gstreamer/1.0/mingw_x86_64/include" AND EXISTS "C:/Qt/6.11.1/mingw_64/bin/libavcodec.dll.a"))
