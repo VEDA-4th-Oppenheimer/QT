@@ -37,9 +37,11 @@ private:
     ChannelState m_state;
     QLabel  *m_noLabel;
     QLabel  *m_name;
+    QLabel  *m_resBadge = nullptr;
     QLabel  *m_status;
     QWidget *m_view;
     QLabel  *m_solo = nullptr;
     bool     m_hasPerson = false;
     int      m_personCount = 0;
+    QSize    m_currentFrameSize;
 };

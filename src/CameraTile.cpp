@@ -87,8 +87,16 @@ CameraTile::CameraTile(const ChannelState &state, QWidget *parent)
         .arg(Theme::AccentBright.name(), Theme::AccentBg.name()));
     m_solo->hide();
 
+    // 현재 수신 중인 실시간 해상도 배지 (800x448 서브 vs 2592x1520 원본 4MP)
+    m_resBadge = new QLabel(head);
+    m_resBadge->setStyleSheet(Theme::mono(9, 600) + QString(
+        "color:%1;background:#2a2b36;border:1px solid #3a3b48;border-radius:3px;padding:1px 5px;")
+        .arg(Theme::TextFaint.name()));
+    m_resBadge->hide();
+
     hl->addWidget(m_noLabel);
     hl->addWidget(m_name, 1);
+    hl->addWidget(m_resBadge);
     hl->addWidget(m_solo);
     hl->addWidget(m_status);
 
@@ -133,6 +141,23 @@ void CameraTile::mouseReleaseEvent(QMouseEvent *ev) {
 }
 
 void CameraTile::setFrame(const QImage &img) {
+    if (!img.isNull() && img.size() != m_currentFrameSize) {
+        m_currentFrameSize = img.size();
+        if (m_resBadge) {
+            const bool isFull = (m_currentFrameSize.width() >= 1920);
+            if (isFull) {
+                m_resBadge->setText(QString("%1x%2 (4MP 원본)").arg(m_currentFrameSize.width()).arg(m_currentFrameSize.height()));
+                m_resBadge->setStyleSheet(Theme::mono(9, 700) + QString(
+                    "color:#4ade80;background:#064e3b;border:1px solid #059669;border-radius:3px;padding:1px 5px;"));
+            } else {
+                m_resBadge->setText(QString("%1x%2 (서브)").arg(m_currentFrameSize.width()).arg(m_currentFrameSize.height()));
+                m_resBadge->setStyleSheet(Theme::mono(9, 600) + QString(
+                    "color:%1;background:#2a2b36;border:1px solid #3a3b48;border-radius:3px;padding:1px 5px;")
+                    .arg(Theme::TextFaint.name()));
+            }
+            m_resBadge->show();
+        }
+    }
     static_cast<VideoView *>(m_view)->frame = img;
     m_view->update();
 }
