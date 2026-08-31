@@ -15,7 +15,7 @@ public:
     explicit CameraTile(const ChannelState &state, QWidget *parent = nullptr);
 
     void setFrame(const QImage &img);
-    void setOnline(bool online);
+    void setOnline(bool online, bool keepFrame = true);
     void setFps(double fps);
     void setDetectedObjects(const QVector<SpatialObject> &objects);
 

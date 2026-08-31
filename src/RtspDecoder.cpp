@@ -94,12 +94,18 @@ bool RtspDecoder::openStream() {
     m_fmt = avformat_alloc_context();
     m_fmt->interrupt_callback.callback = &RtspDecoder::interruptCallback;
     m_fmt->interrupt_callback.opaque = this;
+    m_fmt->flags |= AVFMT_FLAG_NOBUFFER;
+    m_fmt->flags |= AVFMT_FLAG_FAST_SEEK;
     m_deadlineMs = QDateTime::currentMSecsSinceEpoch() + kReadTimeoutMs;
 
     AVDictionary *opts = nullptr;
     av_dict_set(&opts, "rtsp_transport", "tcp", 0);
-    av_dict_set(&opts, "timeout", "8000000", 0);
-    av_dict_set(&opts, "max_delay", "500000", 0);
+    av_dict_set(&opts, "fflags", "nobuffer", 0);
+    av_dict_set(&opts, "flags", "low_delay", 0);
+    av_dict_set(&opts, "probesize", "65536", 0);       // 기본 5MB -> 64KB (초고속 스트림 프로빙)
+    av_dict_set(&opts, "analyzeduration", "100000", 0); // 기본 5초 -> 100ms (0.1초 분석)
+    av_dict_set(&opts, "max_delay", "100000", 0);       // 100ms
+    av_dict_set(&opts, "timeout", "5000000", 0);
 
     int ret = avformat_open_input(&m_fmt, targetUrl.toUtf8().constData(), nullptr, &opts);
     av_dict_free(&opts);
@@ -148,6 +154,10 @@ bool RtspDecoder::openStream() {
     }
     m_codec = avcodec_alloc_context3(dec);
     avcodec_parameters_to_context(m_codec, params);
+    m_codec->flags |= AV_CODEC_FLAG_LOW_DELAY;
+#ifdef AV_CODEC_FLAG2_FAST
+    m_codec->flags2 |= AV_CODEC_FLAG2_FAST;
+#endif
     if (avcodec_open2(m_codec, dec, nullptr) < 0) {
         emit logLine("RTSP", QString("CH%1 디코더 open 실패").arg(m_channel));
         closeStream();

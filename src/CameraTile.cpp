@@ -137,11 +137,11 @@ void CameraTile::setFrame(const QImage &img) {
     m_view->update();
 }
 
-void CameraTile::setOnline(bool online) {
+void CameraTile::setOnline(bool online, bool keepFrame) {
     m_state.online = online;
     static_cast<VideoView *>(m_view)->online = online;
     updateHeaderStatus();
-    if (!online) {
+    if (!online && !keepFrame) {
         static_cast<VideoView *>(m_view)->frame = QImage();
         setDetectedObjects({});
     }

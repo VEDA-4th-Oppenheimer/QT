@@ -318,7 +318,7 @@ void MainWindow::rebuildUi() {
     });
     connect(m_video, &RtspSource::channelStatusChanged, this, [this](int ch, bool online, double fps) {
         if (ch < 1 || ch > 4) return;
-        m_tiles[ch - 1]->setOnline(online);
+        m_tiles[ch - 1]->setOnline(online, true);
         m_tiles[ch - 1]->setFps(fps);
         m_devicesTab->setChannelOnline(ch, online);
     });
