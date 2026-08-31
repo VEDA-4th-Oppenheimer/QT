@@ -289,7 +289,6 @@ void RtspDecoder::run() {
         double totalScaleMs = 0.0;
         int latencySampleCount = 0;
         enum AVPixelFormat lastPixFmt = AV_PIX_FMT_NONE;
-        bool hasSeenFirstKeyframe = false;
 
         while (!m_stop.load()) {
             if (m_urlChanged.load()) {
@@ -323,16 +322,6 @@ void RtspDecoder::run() {
                     const QByteArray raw(reinterpret_cast<const char *>(pkt->data), pkt->size);
                     if (raw.contains("BoundingBox") || raw.contains("boundingbox") || raw.contains("ObjectId")) {
                         emit metadataReady(m_channel, raw);
-                    }
-                }
-
-                // 첫 번째 키프레임(SPS/PPS 헤더)이 도착하기 전의 불완전한 P-Frame 폐기 (cabac/slice_header 에러 원천 차단)
-                if (!hasSeenFirstKeyframe) {
-                    if (pkt->flags & AV_PKT_FLAG_KEY) {
-                        hasSeenFirstKeyframe = true;
-                    } else {
-                        av_packet_unref(pkt);
-                        continue;
                     }
                 }
 
