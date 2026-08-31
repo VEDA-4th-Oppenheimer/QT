@@ -222,14 +222,7 @@ bool RtspDecoder::openStream() {
     const bool initFull = m_fullResolution.load();
     m_dstW = initFull ? m_codec->width : qMin(kMaxDecodeWidth, m_codec->width);
     m_dstH = initFull ? m_codec->height : (m_codec->width > 0 ? m_dstW * m_codec->height / m_codec->width : m_codec->height);
-    m_sws = sws_getContext(m_codec->width, m_codec->height, m_codec->pix_fmt,
-                           m_dstW, m_dstH, AV_PIX_FMT_RGB24,
-                           SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (!m_sws) {
-        emit logLine("RTSP", QString("CH%1 스케일러 생성 실패").arg(m_channel));
-        closeStream();
-        return false;
-    }
+    m_sws = nullptr;
 
     emit logLine("RTSP", QString("CH%1 연결 성공 — %2 (%3x%4 @ %5x%6, 가속=%7)")
                              .arg(m_channel).arg(dec->name).arg(m_codec->width).arg(m_codec->height)
@@ -295,6 +288,7 @@ void RtspDecoder::run() {
         double totalDecodeMs = 0.0;
         double totalScaleMs = 0.0;
         int latencySampleCount = 0;
+        enum AVPixelFormat lastPixFmt = AV_PIX_FMT_NONE;
 
         while (!m_stop.load()) {
             if (m_urlChanged.load()) {
@@ -346,42 +340,47 @@ void RtspDecoder::run() {
                             displayFrame = m_swFrame;
                         }
 
-                        // 해상도 모드(1채널 확대 시 원본 vs 4분할 시 다운샘플) 동적 전환 검사
+                        const auto curPixFmt = static_cast<enum AVPixelFormat>(displayFrame->format);
                         const bool reqFull = m_fullResolution.load();
                         const int targetW = reqFull ? m_codec->width : qMin(kMaxDecodeWidth, m_codec->width);
                         const int targetH = reqFull ? m_codec->height : (m_codec->width > 0 ? targetW * m_codec->height / m_codec->width : m_codec->height);
 
-                        if (m_dstW != targetW || m_dstH != targetH || !m_sws) {
+                        if (m_dstW != targetW || m_dstH != targetH || !m_sws || lastPixFmt != curPixFmt) {
                             if (m_sws) { sws_freeContext(m_sws); m_sws = nullptr; }
                             m_dstW = targetW;
                             m_dstH = targetH;
-                            const auto pixFmt = static_cast<enum AVPixelFormat>(displayFrame->format);
-                            m_sws = sws_getContext(m_codec->width, m_codec->height, pixFmt,
+                            lastPixFmt = curPixFmt;
+                            m_sws = sws_getContext(m_codec->width, m_codec->height, curPixFmt,
                                                    m_dstW, m_dstH, AV_PIX_FMT_RGB24,
                                                    SWS_BILINEAR, nullptr, nullptr, nullptr);
 
-                            av_free(buffer);
-                            const int newBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
-                            buffer = static_cast<uint8_t *>(av_malloc(newBytes));
-                            av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer,
-                                                 AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
+                            if (m_sws) {
+                                av_free(buffer);
+                                const int newBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
+                                buffer = static_cast<uint8_t *>(av_malloc(newBytes));
+                                av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer,
+                                                     AV_PIX_FMT_RGB24, m_dstW, m_dstH, 1);
 
-                            emit logLine("RTSP", QString("CH%1 해상도 전환 — %2x%3 (%4)")
-                                                     .arg(m_channel).arg(m_dstW).arg(m_dstH)
-                                                     .arg(reqFull ? QStringLiteral("원본 해상도") : QStringLiteral("다운샘플링")));
+                                emit logLine("RTSP", QString("CH%1 해상도/포맷 전환 — %2x%3 (%4, 포맷=%5)")
+                                                         .arg(m_channel).arg(m_dstW).arg(m_dstH)
+                                                         .arg(reqFull ? QStringLiteral("원본 해상도") : QStringLiteral("다운샘플링"))
+                                                         .arg(av_get_pix_fmt_name(curPixFmt)));
+                            }
                         }
 
-                        scaleTimer.start();
-                        sws_scale(m_sws, displayFrame->data, displayFrame->linesize, 0, m_codec->height,
-                                  rgbFrame->data, rgbFrame->linesize);
-                        const double scaleMs = scaleTimer.nsecsElapsed() / 1.0e6;
+                        if (m_sws && displayFrame->data[0]) {
+                            scaleTimer.start();
+                            sws_scale(m_sws, displayFrame->data, displayFrame->linesize, 0, m_codec->height,
+                                      rgbFrame->data, rgbFrame->linesize);
+                            const double scaleMs = scaleTimer.nsecsElapsed() / 1.0e6;
 
-                        totalDecodeMs += decodeMs;
-                        totalScaleMs += scaleMs;
-                        ++latencySampleCount;
+                            totalDecodeMs += decodeMs;
+                            totalScaleMs += scaleMs;
+                            ++latencySampleCount;
 
-                        QImage img(rgbFrame->data[0], m_dstW, m_dstH, rgbFrame->linesize[0], QImage::Format_RGB888);
-                        emit frameReady(m_channel, img.copy());
+                            QImage img(rgbFrame->data[0], m_dstW, m_dstH, rgbFrame->linesize[0], QImage::Format_RGB888);
+                            emit frameReady(m_channel, img.copy());
+                        }
 
                         ++frameCount;
                         const qint64 now = QDateTime::currentMSecsSinceEpoch();
