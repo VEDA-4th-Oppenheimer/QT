@@ -69,6 +69,7 @@ private:
     };
 
     QMap<int, RtspDecoder *> m_decoders;
+    QMap<int, RtspDecoder *> m_warmingDecoders; // 백그라운드 웜업 중인 디코더 (0초 무중단 스왑용)
     QMap<int, QMap<QString, CachedObject>> m_cachedObjectsByChannel;
     QMap<int, QByteArray> m_metadataBuffers;
     QSet<int> m_metadataLogSeen;
@@ -78,4 +79,7 @@ private:
     qint64                   m_cacheTtlMs = kDefaultTtlMs;
     int                      m_currentSoloChannel = 0;
     CameraConfig::HwCapability m_hwCap;
+
+    void onWarmingFrameReady(int ch, RtspDecoder *warmDec, const QImage &firstFrame);
+    void cleanupWarmingDecoder(int ch);
 };

@@ -38,6 +38,10 @@ RtspSource::~RtspSource() {
 
 void RtspSource::stopAll() {
     if (m_flushTimer) m_flushTimer->stop();
+    for (auto *d : std::as_const(m_warmingDecoders)) d->stop();
+    for (auto *d : std::as_const(m_warmingDecoders)) { d->wait(3000); delete d; }
+    m_warmingDecoders.clear();
+
     for (auto *d : std::as_const(m_decoders)) d->stop();
     for (auto *d : std::as_const(m_decoders)) { d->wait(3000); delete d; }
     m_decoders.clear();
@@ -48,6 +52,56 @@ void RtspSource::stopAll() {
         m_metadataLogSeen.clear();
         emit objectsUpdated({});
     }
+}
+
+void RtspSource::cleanupWarmingDecoder(int ch) {
+    if (m_warmingDecoders.contains(ch)) {
+        auto *w = m_warmingDecoders.take(ch);
+        if (w) {
+            w->disconnect();
+            w->stop();
+            w->wait(1000);
+            w->deleteLater();
+        }
+    }
+}
+
+void RtspSource::onWarmingFrameReady(int ch, RtspDecoder *warmDec, const QImage &firstFrame) {
+    if (!warmDec || m_warmingDecoders.value(ch) != warmDec) return;
+
+    // 1. 새 첫 프레임 즉시 화면 표출 (0초 스왑)
+    emit frameReceived(ch, firstFrame);
+
+    // 2. 기존 디코더 정리
+    if (m_decoders.contains(ch)) {
+        auto *oldDec = m_decoders.take(ch);
+        if (oldDec) {
+            oldDec->disconnect();
+            oldDec->stop();
+            oldDec->wait(1000);
+            oldDec->deleteLater();
+        }
+    }
+
+    // 3. 웜업 디코더를 액티브 디코더로 정식 승격(Promote)
+    m_warmingDecoders.remove(ch);
+    warmDec->disconnect();
+
+    connect(warmDec, &RtspDecoder::frameReady, this, &RtspSource::frameReceived);
+    connect(warmDec, &RtspDecoder::metadataReady, this, [this](int channel, const QByteArray &payload) {
+        ingestMetadataPayload(channel, payload);
+    });
+    connect(warmDec, &RtspDecoder::statusChanged, this, &RtspSource::channelStatusChanged);
+    connect(warmDec, &RtspDecoder::logLine, this, &RtspSource::logLine);
+    connect(warmDec, &RtspDecoder::gaveUp, this, [this](int c) { m_gaveUp.insert(c); });
+
+    m_decoders.insert(ch, warmDec);
+
+    emit logLine("RTSP", QString("CH%1 ⚡ 0초 무중단 스왑 완료 — %2 (가속=%3, %4x%5)")
+                             .arg(ch)
+                             .arg(warmDec->url().contains("profile4") ? QStringLiteral("4분할 CPU 서브스트림") : QStringLiteral("1채널 GPU 메인스트림"))
+                             .arg(warmDec->hwAccel().toUpper())
+                             .arg(firstFrame.width()).arg(firstFrame.height()));
 }
 
 void RtspSource::reconnectAll() {
@@ -62,33 +116,58 @@ void RtspSource::reconnectAll() {
 
 void RtspSource::setSoloChannel(int channel) {
     m_currentSoloChannel = channel;
-    for (auto it = m_decoders.begin(); it != m_decoders.end(); ++it) {
-        const int ch = it.key();
-        auto *dec = it.value();
-        if (dec == nullptr) continue;
-        const bool solo = (channel > 0 && ch == channel);
-        dec->setFullResolution(solo);
 
-        // 4채널 분할 시: CPU 소프트웨어 디코딩 + H.264 profile4 (1.07ms 최저지연)
-        // 1채널 확대 시: GPU 하드웨어 가속 + 고해상도 메인스트림 (profile3 H.265 / profile2 H.264)
+    for (int ch = 1; ch <= 4; ++ch) {
+        auto *curDec = m_decoders.value(ch, nullptr);
+        if (!curDec && !m_warmingDecoders.contains(ch)) continue;
+
+        const bool solo = (channel > 0 && ch == channel);
         const int targetProfile = solo ? m_hwCap.soloProfile : 4;
         const QString targetAccel = solo ? m_hwCap.hwDeviceName : QStringLiteral("none");
-        const QString targetCodec = solo ? m_hwCap.codecName.toUpper() : QStringLiteral("H264");
 
-        dec->setHwAccel(targetAccel);
+        const QString baseRefUrl = curDec ? curDec->url() : (m_warmingDecoders.contains(ch) ? m_warmingDecoders[ch]->url() : QString());
+        if (baseRefUrl.isEmpty()) continue;
 
-        const QString curUrl = dec->url();
-        const QString targetUrl = CameraConfig::setUrlProfile(curUrl, targetProfile);
-        if (curUrl != targetUrl) {
-            dec->setUrl(targetUrl);
-            emit logLine("RTSP", QString("CH%1 프로파일 전환: profile%2 -> profile%3 (%4, 가속: %5, 코덱: %6)")
-                                     .arg(ch)
-                                     .arg(solo ? 4 : m_hwCap.soloProfile)
-                                     .arg(targetProfile)
-                                     .arg(solo ? QStringLiteral("1채널 확대 2592x1520 원본 모드") : QStringLiteral("2x2 분할 서브스트림 모드"))
-                                     .arg(solo ? m_hwCap.hwDeviceName.toUpper() : QStringLiteral("CPU"))
-                                     .arg(targetCodec));
+        const QString targetUrl = CameraConfig::setUrlProfile(baseRefUrl, targetProfile);
+
+        // 이미 액티브 디코더가 목표 URL 및 가속을 실행 중인 경우
+        if (curDec && curDec->url() == targetUrl && curDec->hwAccel() == targetAccel) {
+            cleanupWarmingDecoder(ch);
+            curDec->setFullResolution(solo);
+            continue;
         }
+
+        // 이미 같은 목표 URL로 웜업 중인 디코더가 있다면 유지
+        if (m_warmingDecoders.contains(ch) && m_warmingDecoders[ch]->url() == targetUrl && m_warmingDecoders[ch]->hwAccel() == targetAccel) {
+            continue;
+        }
+
+        // 기존 웜업 디코더 정리
+        cleanupWarmingDecoder(ch);
+
+        // 백그라운드 웜업 디코더 생성 및 시작 (기존 스트림은 절대 끊지 않고 계속 35fps 실시간 재생)
+        auto *warmDec = new RtspDecoder(ch, targetUrl, this);
+        warmDec->setHwAccel(targetAccel);
+        warmDec->setFullResolution(solo);
+
+        connect(warmDec, &RtspDecoder::frameReady, this, [this, ch, warmDec](int /*c*/, const QImage &img) {
+            onWarmingFrameReady(ch, warmDec, img);
+        });
+        connect(warmDec, &RtspDecoder::gaveUp, this, [this, ch, warmDec](int /*c*/) {
+            if (m_warmingDecoders.value(ch) == warmDec) {
+                m_warmingDecoders.remove(ch);
+                warmDec->deleteLater();
+            }
+        });
+        connect(warmDec, &RtspDecoder::logLine, this, &RtspSource::logLine);
+
+        m_warmingDecoders.insert(ch, warmDec);
+        warmDec->start();
+
+        emit logLine("RTSP", QString("CH%1 백그라운드 웜업 시작 — profile%2 (%3, 기존 스트림 35fps 실시간 유지 중)")
+                                 .arg(ch)
+                                 .arg(targetProfile)
+                                 .arg(solo ? QStringLiteral("1채널 확대 GPU 메인스트림") : QStringLiteral("4분할 CPU 서브스트림")));
     }
 }
 
