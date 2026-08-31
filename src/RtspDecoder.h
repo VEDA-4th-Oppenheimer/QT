@@ -13,6 +13,8 @@ struct SwsContext;
 struct AVStream;
 #endif
 
+#include <QMutex>
+
 // 채널 1개의 RTSP 스트림을 백그라운드 스레드에서 디코딩한다.
 class RtspDecoder : public QThread {
     Q_OBJECT
@@ -23,6 +25,8 @@ public:
     void stop();   // run() 루프를 정리하고 스레드를 종료시킨다
     void setFullResolution(bool full);
     bool isFullResolution() const { return m_fullResolution.load(); }
+    void setUrl(const QString &newUrl);
+    QString url() const;
 
 signals:
     void frameReady(int channel, const QImage &frame);
@@ -52,7 +56,9 @@ private:
 
     int     m_channel;
     QString m_url;
+    mutable QMutex m_urlMutex;
     int     m_attempt = 0;
     std::atomic<bool> m_stop{false};
     std::atomic<bool> m_fullResolution{false};
+    std::atomic<bool> m_urlChanged{false};
 };

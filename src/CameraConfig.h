@@ -3,22 +3,33 @@
 #include <QString>
 #include <QUrl>
 
+#include <QRegularExpression>
+
 // Hanwha PNM 시리즈 멀티센서 카메라의 채널 URL 을 만든다.
 //
-//   rtsp://<계정>:<비번>@<IP>:554/<0~3>/profile2/media.smp
+//   rtsp://<계정>:<비번>@<IP>:554/<0~3>/profile<N>/media.smp
 //
-// 센서 0~3 이 CH1~CH4 에 대응한다. profile2 는 서브스트림(profile1 은 고해상도
-// 메인스트림) — 타일 4개를 동시에 디코딩하므로 서브스트림을 쓴다.
+// 센서 0~3 이 CH1~CH4 에 대응한다.
+//   - profile10: 2x2 분할 화면용 저해상도 서브스트림 (대역폭/CPU 절약)
+//   - profile2:  1채널 확대 모드용 2592x1520 원본 고해상도 메인스트림
 //
 // 카메라는 RPi 와 물리적으로 떨어져 있고 데몬은 카메라를 건드리지 않는다.
 // RTSP 는 Qt 가 카메라로 직접 연결하므로, 카메라 정보는 사용자가 등록할 때
 // 입력받는다(관리자 서버를 거치지 않는다).
 namespace CameraConfig {
 
+inline QString setUrlProfile(const QString &url, int profileNum) {
+    static const QRegularExpression re(QStringLiteral("/profile\\d+/"));
+    QString res = url;
+    res.replace(re, QStringLiteral("/profile%1/").arg(profileNum));
+    return res;
+}
+
 inline QJsonObject buildChannels(const QString &host,
                                  const QString &user,
                                  const QString &password,
-                                 int port = 554)
+                                 int port = 554,
+                                 int defaultProfile = 10)
 {
     QJsonObject channels;
     if (host.trimmed().isEmpty()) return channels;
@@ -35,7 +46,7 @@ inline QJsonObject buildChannels(const QString &host,
                          + QLatin1Char(':') + QString::number(port) + QLatin1Char('/');
     for (int sensor = 0; sensor < 4; ++sensor) {
         channels.insert(QString::number(sensor + 1),
-                        base + QString::number(sensor) + QStringLiteral("/profile2/media.smp"));
+                        base + QString::number(sensor) + QStringLiteral("/profile%1/media.smp").arg(defaultProfile));
     }
     return channels;
 }

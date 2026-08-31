@@ -63,15 +63,33 @@ void RtspDecoder::setFullResolution(bool full) {
     m_fullResolution.store(full);
 }
 
+void RtspDecoder::setUrl(const QString &newUrl) {
+    QMutexLocker locker(&m_urlMutex);
+    if (m_url == newUrl) return;
+    m_url = newUrl;
+    m_urlChanged.store(true);
+}
+
+QString RtspDecoder::url() const {
+    QMutexLocker locker(&m_urlMutex);
+    return m_url;
+}
+
 void RtspDecoder::stop() { m_stop.store(true); }
 
 #ifdef USE_FFMPEG
 int RtspDecoder::interruptCallback(void *opaque) {
     auto *self = static_cast<RtspDecoder *>(opaque);
-    return (self->m_stop.load() || QDateTime::currentMSecsSinceEpoch() > self->m_deadlineMs) ? 1 : 0;
+    return (self->m_stop.load() || self->m_urlChanged.load() || QDateTime::currentMSecsSinceEpoch() > self->m_deadlineMs) ? 1 : 0;
 }
 
 bool RtspDecoder::openStream() {
+    QString targetUrl;
+    {
+        QMutexLocker locker(&m_urlMutex);
+        targetUrl = m_url;
+    }
+
     m_fmt = avformat_alloc_context();
     m_fmt->interrupt_callback.callback = &RtspDecoder::interruptCallback;
     m_fmt->interrupt_callback.opaque = this;
@@ -82,7 +100,7 @@ bool RtspDecoder::openStream() {
     av_dict_set(&opts, "timeout", "8000000", 0);
     av_dict_set(&opts, "max_delay", "500000", 0);
 
-    int ret = avformat_open_input(&m_fmt, m_url.toUtf8().constData(), nullptr, &opts);
+    int ret = avformat_open_input(&m_fmt, targetUrl.toUtf8().constData(), nullptr, &opts);
     av_dict_free(&opts);
     if (ret < 0) {
         char buf[256];
@@ -204,10 +222,20 @@ void RtspDecoder::run() {
         qint64 fpsTimer = QDateTime::currentMSecsSinceEpoch();
 
         while (!m_stop.load()) {
+            if (m_urlChanged.load()) {
+                m_urlChanged.store(false);
+                emit logLine("RTSP", QString("CH%1 프로파일 변경 요청 수신 — 새 스트림으로 즉시 전환합니다").arg(m_channel));
+                break;
+            }
             m_deadlineMs = QDateTime::currentMSecsSinceEpoch() + kReadTimeoutMs;
             int ret = av_read_frame(m_fmt, pkt);
             if (ret < 0) {
-                emit logLine("RTSP", QString("CH%1 스트림 끊김 (read error)").arg(m_channel));
+                if (m_urlChanged.load()) {
+                    m_urlChanged.store(false);
+                    emit logLine("RTSP", QString("CH%1 프로파일 변경 요청 수신 — 새 스트림으로 즉시 전환합니다").arg(m_channel));
+                } else {
+                    emit logLine("RTSP", QString("CH%1 스트림 끊김 (read error)").arg(m_channel));
+                }
                 break;
             }
 

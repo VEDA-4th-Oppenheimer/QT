@@ -1,5 +1,6 @@
 #include "SpatialMetadata.h"
 #include "SpatialProjector.h"
+#include "CameraConfig.h"
 #include "Models.h"
 
 #include <cassert>
@@ -354,6 +355,27 @@ void testMultiChannelRejectedSessionParsing() {
     std::cout << "[PASS] testMultiChannelRejectedSessionParsing: parsed rejected multi-channel session and applied PASS channels (CH1, CH4) successfully!\n";
 }
 
+void testCameraConfigProfileSwitching() {
+    // 1. buildChannels 기본 profile10 검증
+    QJsonObject chans = CameraConfig::buildChannels("172.20.32.43", "admin", "5hanwha!");
+    assert(chans.size() == 4);
+    assert(chans.value("1").toString().contains("/0/profile10/media.smp"));
+    assert(chans.value("2").toString().contains("/1/profile10/media.smp"));
+    assert(chans.value("3").toString().contains("/2/profile10/media.smp"));
+    assert(chans.value("4").toString().contains("/3/profile10/media.smp"));
+
+    // 2. setUrlProfile 동적 치환 검증
+    QString p10Url = chans.value("1").toString();
+    QString p2Url = CameraConfig::setUrlProfile(p10Url, 2);
+    assert(p2Url.contains("/0/profile2/media.smp"));
+    assert(!p2Url.contains("profile10"));
+
+    QString backToP10 = CameraConfig::setUrlProfile(p2Url, 10);
+    assert(backToP10 == p10Url);
+
+    std::cout << "[PASS] testCameraConfigProfileSwitching: buildChannels defaults to profile10, setUrlProfile switches dynamically!\n";
+}
+
 int main() {
     testSpatialProjectorCH1();
     testSpatialMetadataOnvifWithProjection();
@@ -363,6 +385,7 @@ int main() {
     testLoadManualExtrinsicJson();
     testPerChannelLoading();
     testMultiChannelRejectedSessionParsing();
-    std::cout << "All spatial projection tests (including multi-channel rejected session parsing) PASS!\n";
+    testCameraConfigProfileSwitching();
+    std::cout << "All spatial projection & RTSP profile tests PASS!\n";
     return 0;
 }

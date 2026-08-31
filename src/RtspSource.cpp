@@ -1,6 +1,7 @@
 #include "RtspSource.h"
 #include "RtspDecoder.h"
 #include "ConfigPath.h"
+#include "CameraConfig.h"
 #include "SpatialMetadata.h"
 #include "SpatialProjector.h"
 
@@ -64,8 +65,19 @@ void RtspSource::setSoloChannel(int channel) {
         const int ch = it.key();
         auto *dec = it.value();
         if (dec == nullptr) continue;
-        const bool full = (channel > 0 && ch == channel);
-        dec->setFullResolution(full);
+        const bool solo = (channel > 0 && ch == channel);
+        dec->setFullResolution(solo);
+
+        const QString curUrl = dec->url();
+        const QString targetUrl = CameraConfig::setUrlProfile(curUrl, solo ? 2 : 10);
+        if (curUrl != targetUrl) {
+            dec->setUrl(targetUrl);
+            emit logLine("RTSP", QString("CH%1 프로파일 전환: %2 -> %3 (%4)")
+                                     .arg(ch)
+                                     .arg(solo ? QStringLiteral("profile10") : QStringLiteral("profile2"))
+                                     .arg(solo ? QStringLiteral("profile2") : QStringLiteral("profile10"))
+                                     .arg(solo ? QStringLiteral("1채널 확대 2592x1520 원본 모드") : QStringLiteral("2x2 분할 서브스트림 모드")));
+        }
     }
 }
 
