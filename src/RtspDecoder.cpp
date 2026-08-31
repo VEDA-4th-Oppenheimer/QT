@@ -108,6 +108,9 @@ int RtspDecoder::getHwFormatCallback(AVCodecContext *ctx, const int *pix_fmts) {
 }
 
 bool RtspDecoder::openStream() {
+    m_urlChanged.store(false);
+    m_deadlineMs = QDateTime::currentMSecsSinceEpoch() + kReadTimeoutMs;
+
     QString targetUrl;
     {
         QMutexLocker locker(&m_urlMutex);
@@ -124,7 +127,6 @@ bool RtspDecoder::openStream() {
     m_fmt->interrupt_callback.opaque = this;
     m_fmt->flags |= AVFMT_FLAG_NOBUFFER;
     m_fmt->flags |= AVFMT_FLAG_FAST_SEEK;
-    m_deadlineMs = QDateTime::currentMSecsSinceEpoch() + kReadTimeoutMs;
 
     AVDictionary *opts = nullptr;
     av_dict_set(&opts, "rtsp_transport", "tcp", 0);
