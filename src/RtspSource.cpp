@@ -24,7 +24,7 @@ constexpr qsizetype kMaxMetadataBufferBytes = 1024 * 1024;
 
 RtspSource::RtspSource(QObject *parent) : QObject(parent) {
 #ifdef USE_FFMPEG
-    av_log_set_level(AV_LOG_ERROR);
+    av_log_set_level(AV_LOG_FATAL);
 #endif
     m_hwCap = CameraConfig::detectHwCapability();
     m_flushTimer = new QTimer(this);
