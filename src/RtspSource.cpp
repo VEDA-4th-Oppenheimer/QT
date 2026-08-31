@@ -69,17 +69,25 @@ void RtspSource::setSoloChannel(int channel) {
         const bool solo = (channel > 0 && ch == channel);
         dec->setFullResolution(solo);
 
+        // 4채널 분할 시: CPU 소프트웨어 디코딩 + H.264 profile4 (1.07ms 최저지연)
+        // 1채널 확대 시: GPU 하드웨어 가속 + 고해상도 메인스트림 (profile3 H.265 / profile2 H.264)
+        const int targetProfile = solo ? m_hwCap.soloProfile : 4;
+        const QString targetAccel = solo ? m_hwCap.hwDeviceName : QStringLiteral("none");
+        const QString targetCodec = solo ? m_hwCap.codecName.toUpper() : QStringLiteral("H264");
+
+        dec->setHwAccel(targetAccel);
+
         const QString curUrl = dec->url();
-        const int targetProfile = solo ? m_hwCap.soloProfile : m_hwCap.gridProfile;
         const QString targetUrl = CameraConfig::setUrlProfile(curUrl, targetProfile);
         if (curUrl != targetUrl) {
             dec->setUrl(targetUrl);
-            emit logLine("RTSP", QString("CH%1 프로파일 전환: profile%2 -> profile%3 (%4, 코덱: %5)")
+            emit logLine("RTSP", QString("CH%1 프로파일 전환: profile%2 -> profile%3 (%4, 가속: %5, 코덱: %6)")
                                      .arg(ch)
-                                     .arg(solo ? m_hwCap.gridProfile : m_hwCap.soloProfile)
+                                     .arg(solo ? 4 : m_hwCap.soloProfile)
                                      .arg(targetProfile)
                                      .arg(solo ? QStringLiteral("1채널 확대 2592x1520 원본 모드") : QStringLiteral("2x2 분할 서브스트림 모드"))
-                                     .arg(m_hwCap.codecName.toUpper()));
+                                     .arg(solo ? m_hwCap.hwDeviceName.toUpper() : QStringLiteral("CPU"))
+                                     .arg(targetCodec));
         }
     }
 }
@@ -87,7 +95,7 @@ void RtspSource::setSoloChannel(int channel) {
 void RtspSource::loadConfigAndStart(const QString &path) {
     SpatialProjector::instance().loadProfiles(resolveConfigPath("config/calibration_profiles.json"));
 
-    emit logLine("RTSP", QString("디코더 하드웨어 가속 프로빙: %1").arg(m_hwCap.description));
+    emit logLine("RTSP", QString("하이브리드 가속 파이프라인: 4채널 분할=CPU(H.264 profile4), 1채널 확대=%1").arg(m_hwCap.description));
 
     QFile f(resolveConfigPath(path));
     if (!f.open(QIODevice::ReadOnly)) {
@@ -123,11 +131,14 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         const QString rawUrl = it.value().toString();
         if (ch < 1 || ch > 4 || rawUrl.isEmpty()) continue;
 
-        // 감지된 하드웨어 가속 프로파일(H.265 profile5 / H.264 profile4)로 URL 조정
-        const QString targetUrl = CameraConfig::setUrlProfile(rawUrl, m_hwCap.gridProfile);
+        // 4채널 기본 상태는 CPU 소프트웨어 + H.264 profile4 (1.07ms 최저지연)
+        const bool solo = (m_currentSoloChannel > 0 && ch == m_currentSoloChannel);
+        const int targetProfile = solo ? m_hwCap.soloProfile : 4;
+        const QString targetAccel = solo ? m_hwCap.hwDeviceName : QStringLiteral("none");
+        const QString targetUrl = CameraConfig::setUrlProfile(rawUrl, targetProfile);
 
         auto *dec = new RtspDecoder(ch, targetUrl, this);
-        dec->setHwAccel(m_hwCap.hwDeviceName);
+        dec->setHwAccel(targetAccel);
         connect(dec, &RtspDecoder::frameReady, this, &RtspSource::frameReceived);
         connect(dec, &RtspDecoder::metadataReady, this,
                 [this](int channel, const QByteArray &payload) {
@@ -136,7 +147,7 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         connect(dec, &RtspDecoder::statusChanged, this, &RtspSource::channelStatusChanged);
         connect(dec, &RtspDecoder::logLine, this, &RtspSource::logLine);
         connect(dec, &RtspDecoder::gaveUp, this, [this](int c) { m_gaveUp.insert(c); });
-        dec->setFullResolution(m_currentSoloChannel > 0 && ch == m_currentSoloChannel);
+        dec->setFullResolution(solo);
         m_decoders.insert(ch, dec);
         dec->start();
     }
@@ -146,8 +157,7 @@ void RtspSource::applyChannels(const QJsonObject &channels, const QString &origi
         return;
     }
     m_applied = channels;
-    emit logLine("RTSP", QString("채널 %1개 시작 (%2, %3)")
-                             .arg(m_decoders.size()).arg(origin).arg(m_hwCap.description));
+    emit logLine("RTSP", QString("채널 %1개 시작 (%2, 기본 모드: 4채널 CPU H.264 profile4)").arg(m_decoders.size()).arg(origin));
 }
 
 void RtspSource::onFlushTimer() {

@@ -398,14 +398,14 @@ void testHwCapabilityDetectionAndSmartProfiles() {
         assert(cap.hwDeviceName == "none");
     }
 
-    // URL 동적 전환 검증 (H.265 5 <-> 3 및 H.264 4 <-> 2)
+    // 하이브리드 가속 전략 검증: 4분할 시 항상 CPU profile4(1.07ms) <-> 1채널 확대 시 GPU soloProfile
     QString raw = "rtsp://admin:5hanwha!@172.20.32.43:554/0/profile4/media.smp";
-    QString gridUrl = CameraConfig::setUrlProfile(raw, cap.gridProfile);
-    QString soloUrl = CameraConfig::setUrlProfile(gridUrl, cap.soloProfile);
-    assert(gridUrl.contains(QString("/profile%1/").arg(cap.gridProfile)));
-    assert(soloUrl.contains(QString("/profile%1/").arg(cap.soloProfile)));
+    QString hybridGridUrl = CameraConfig::setUrlProfile(raw, 4);
+    QString hybridSoloUrl = CameraConfig::setUrlProfile(hybridGridUrl, cap.soloProfile);
+    assert(hybridGridUrl.contains("/profile4/"));
+    assert(hybridSoloUrl.contains(QString("/profile%1/").arg(cap.soloProfile)));
 
-    std::cout << "[PASS] testHwCapabilityDetectionAndSmartProfiles: hardware capability detected and smart profiles verified successfully!\n";
+    std::cout << "[PASS] testHwCapabilityDetectionAndSmartProfiles: hardware capability detected and hybrid CPU-grid / GPU-zoom verified successfully!\n";
 }
 
 int main() {
