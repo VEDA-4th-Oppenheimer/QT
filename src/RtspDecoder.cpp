@@ -6,6 +6,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/dict.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/hwcontext.h>
 #include <libswscale/swscale.h>
 }
 #endif
@@ -76,6 +77,18 @@ QString RtspDecoder::url() const {
     return m_url;
 }
 
+void RtspDecoder::setHwAccel(const QString &accel) {
+    QMutexLocker locker(&m_hwMutex);
+    if (m_hwAccelName == accel) return;
+    m_hwAccelName = accel;
+    m_urlChanged.store(true);
+}
+
+QString RtspDecoder::hwAccel() const {
+    QMutexLocker locker(&m_hwMutex);
+    return m_hwAccelName;
+}
+
 void RtspDecoder::stop() { m_stop.store(true); }
 
 #ifdef USE_FFMPEG
@@ -84,11 +97,26 @@ int RtspDecoder::interruptCallback(void *opaque) {
     return (self->m_stop.load() || self->m_urlChanged.load() || QDateTime::currentMSecsSinceEpoch() > self->m_deadlineMs) ? 1 : 0;
 }
 
+int RtspDecoder::getHwFormatCallback(AVCodecContext *ctx, const int *pix_fmts) {
+    auto *self = static_cast<RtspDecoder *>(ctx->opaque);
+    if (!self) return AV_PIX_FMT_NONE;
+    for (const int *p = pix_fmts; *p != -1; p++) {
+        if (*p == self->m_hwPixFmt)
+            return *p;
+    }
+    return AV_PIX_FMT_NONE;
+}
+
 bool RtspDecoder::openStream() {
     QString targetUrl;
     {
         QMutexLocker locker(&m_urlMutex);
         targetUrl = m_url;
+    }
+    QString accel;
+    {
+        QMutexLocker locker(&m_hwMutex);
+        accel = m_hwAccelName;
     }
 
     m_fmt = avformat_alloc_context();
@@ -158,6 +186,33 @@ bool RtspDecoder::openStream() {
 #ifdef AV_CODEC_FLAG2_FAST
     m_codec->flags2 |= AV_CODEC_FLAG2_FAST;
 #endif
+
+    // GPU 하드웨어 가속 설정 (d3d11va, dxva2 등)
+    m_hwPixFmt = -1;
+    if (accel != "none" && !accel.trimmed().isEmpty()) {
+        enum AVHWDeviceType hwType = av_hwdevice_find_type_by_name(accel.toUtf8().constData());
+        if (hwType != AV_HWDEVICE_TYPE_NONE) {
+            for (int i = 0;; i++) {
+                const AVCodecHWConfig *config = avcodec_get_hw_config(dec, i);
+                if (!config) break;
+                if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX &&
+                    config->device_type == hwType) {
+                    m_hwPixFmt = static_cast<int>(config->pix_fmt);
+                    break;
+                }
+            }
+
+            if (m_hwPixFmt != -1) {
+                if (av_hwdevice_ctx_create(&m_hwDeviceCtx, hwType, nullptr, nullptr, 0) >= 0) {
+                    m_codec->hw_device_ctx = av_buffer_ref(m_hwDeviceCtx);
+                    m_codec->opaque = this;
+                    m_codec->get_format = reinterpret_cast<enum AVPixelFormat (*)(AVCodecContext *, const enum AVPixelFormat *)>(&RtspDecoder::getHwFormatCallback);
+                    emit logLine("RTSP", QString("CH%1 GPU 하드웨어 가속(%2) 활성화").arg(m_channel).arg(accel));
+                }
+            }
+        }
+    }
+
     if (avcodec_open2(m_codec, dec, nullptr) < 0) {
         emit logLine("RTSP", QString("CH%1 디코더 open 실패").arg(m_channel));
         closeStream();
@@ -176,15 +231,19 @@ bool RtspDecoder::openStream() {
         return false;
     }
 
-    emit logLine("RTSP", QString("CH%1 연결 성공 — %2x%3 @ %4x%5 (스트림 총 %6개)")
-                             .arg(m_channel).arg(m_codec->width).arg(m_codec->height).arg(m_dstW).arg(m_dstH).arg(m_fmt->nb_streams));
+    emit logLine("RTSP", QString("CH%1 연결 성공 — %2 (%3x%4 @ %5x%6, 가속=%7)")
+                             .arg(m_channel).arg(dec->name).arg(m_codec->width).arg(m_codec->height)
+                             .arg(m_dstW).arg(m_dstH).arg(m_hwDeviceCtx ? accel : QStringLiteral("CPU")));
     return true;
 }
 
 void RtspDecoder::closeStream() {
-    if (m_sws)   { sws_freeContext(m_sws);       m_sws = nullptr; }
-    if (m_codec) { avcodec_free_context(&m_codec); m_codec = nullptr; }
-    if (m_fmt)   { avformat_close_input(&m_fmt);  m_fmt = nullptr; }
+    if (m_sws)         { sws_freeContext(m_sws);         m_sws = nullptr; }
+    if (m_codec)       { avcodec_free_context(&m_codec);   m_codec = nullptr; }
+    if (m_fmt)         { avformat_close_input(&m_fmt);    m_fmt = nullptr; }
+    if (m_hwDeviceCtx) { av_buffer_unref(&m_hwDeviceCtx); m_hwDeviceCtx = nullptr; }
+    if (m_swFrame)     { av_frame_free(&m_swFrame);       m_swFrame = nullptr; }
+    m_hwPixFmt = -1;
     m_videoStreamIndex = -1;
     m_metadataStreamIndices.clear();
 }
@@ -278,6 +337,15 @@ void RtspDecoder::run() {
                     while (avcodec_receive_frame(m_codec, frame) >= 0) {
                         const double decodeMs = decodeTimer.nsecsElapsed() / 1.0e6;
 
+                        AVFrame *displayFrame = frame;
+                        if (frame->format == m_hwPixFmt) {
+                            if (!m_swFrame) m_swFrame = av_frame_alloc();
+                            if (av_hwframe_transfer_data(m_swFrame, frame, 0) < 0) {
+                                continue;
+                            }
+                            displayFrame = m_swFrame;
+                        }
+
                         // 해상도 모드(1채널 확대 시 원본 vs 4분할 시 다운샘플) 동적 전환 검사
                         const bool reqFull = m_fullResolution.load();
                         const int targetW = reqFull ? m_codec->width : qMin(kMaxDecodeWidth, m_codec->width);
@@ -287,7 +355,8 @@ void RtspDecoder::run() {
                             if (m_sws) { sws_freeContext(m_sws); m_sws = nullptr; }
                             m_dstW = targetW;
                             m_dstH = targetH;
-                            m_sws = sws_getContext(m_codec->width, m_codec->height, m_codec->pix_fmt,
+                            const auto pixFmt = static_cast<enum AVPixelFormat>(displayFrame->format);
+                            m_sws = sws_getContext(m_codec->width, m_codec->height, pixFmt,
                                                    m_dstW, m_dstH, AV_PIX_FMT_RGB24,
                                                    SWS_BILINEAR, nullptr, nullptr, nullptr);
 
@@ -303,7 +372,7 @@ void RtspDecoder::run() {
                         }
 
                         scaleTimer.start();
-                        sws_scale(m_sws, frame->data, frame->linesize, 0, m_codec->height,
+                        sws_scale(m_sws, displayFrame->data, displayFrame->linesize, 0, m_codec->height,
                                   rgbFrame->data, rgbFrame->linesize);
                         const double scaleMs = scaleTimer.nsecsElapsed() / 1.0e6;
 

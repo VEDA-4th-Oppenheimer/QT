@@ -11,6 +11,8 @@ struct AVFormatContext;
 struct AVCodecContext;
 struct SwsContext;
 struct AVStream;
+struct AVBufferRef;
+struct AVFrame;
 #endif
 
 #include <QMutex>
@@ -27,6 +29,8 @@ public:
     bool isFullResolution() const { return m_fullResolution.load(); }
     void setUrl(const QString &newUrl);
     QString url() const;
+    void setHwAccel(const QString &accel);
+    QString hwAccel() const;
 
 signals:
     void frameReady(int channel, const QImage &frame);
@@ -41,6 +45,7 @@ protected:
 private:
 #ifdef USE_FFMPEG
     static int interruptCallback(void *opaque);
+    static int getHwFormatCallback(AVCodecContext *ctx, const int *pix_fmts);
     bool openStream();
     void closeStream();
     bool waitBeforeRetry(int attempt);
@@ -48,6 +53,9 @@ private:
     AVFormatContext *m_fmt = nullptr;
     AVCodecContext  *m_codec = nullptr;
     SwsContext      *m_sws = nullptr;
+    AVBufferRef     *m_hwDeviceCtx = nullptr;
+    AVFrame         *m_swFrame = nullptr;
+    int              m_hwPixFmt = -1;
     int m_videoStreamIndex = -1;
     QSet<int> m_metadataStreamIndices;
     int m_dstW = 0, m_dstH = 0;
@@ -57,6 +65,8 @@ private:
     int     m_channel;
     QString m_url;
     mutable QMutex m_urlMutex;
+    QString m_hwAccelName = "none";
+    mutable QMutex m_hwMutex;
     int     m_attempt = 0;
     std::atomic<bool> m_stop{false};
     std::atomic<bool> m_fullResolution{false};
