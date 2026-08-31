@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #include <QDateTime>
+#include <QElapsedTimer>
 
 namespace {
 constexpr int kReconnectDelayMs = 3000;
@@ -220,6 +221,11 @@ void RtspDecoder::run() {
 
         int frameCount = 0;
         qint64 fpsTimer = QDateTime::currentMSecsSinceEpoch();
+        QElapsedTimer decodeTimer;
+        QElapsedTimer scaleTimer;
+        double totalDecodeMs = 0.0;
+        double totalScaleMs = 0.0;
+        int latencySampleCount = 0;
 
         while (!m_stop.load()) {
             if (m_urlChanged.load()) {
@@ -256,9 +262,12 @@ void RtspDecoder::run() {
                     }
                 }
 
+                decodeTimer.start();
                 ret = avcodec_send_packet(m_codec, pkt);
                 if (ret >= 0) {
                     while (avcodec_receive_frame(m_codec, frame) >= 0) {
+                        const double decodeMs = decodeTimer.nsecsElapsed() / 1.0e6;
+
                         // 해상도 모드(1채널 확대 시 원본 vs 4분할 시 다운샘플) 동적 전환 검사
                         const bool reqFull = m_fullResolution.load();
                         const int targetW = reqFull ? m_codec->width : qMin(kMaxDecodeWidth, m_codec->width);
@@ -283,8 +292,14 @@ void RtspDecoder::run() {
                                                      .arg(reqFull ? QStringLiteral("원본 해상도") : QStringLiteral("다운샘플링")));
                         }
 
+                        scaleTimer.start();
                         sws_scale(m_sws, frame->data, frame->linesize, 0, m_codec->height,
                                   rgbFrame->data, rgbFrame->linesize);
+                        const double scaleMs = scaleTimer.nsecsElapsed() / 1.0e6;
+
+                        totalDecodeMs += decodeMs;
+                        totalScaleMs += scaleMs;
+                        ++latencySampleCount;
 
                         QImage img(rgbFrame->data[0], m_dstW, m_dstH, rgbFrame->linesize[0], QImage::Format_RGB888);
                         emit frameReady(m_channel, img.copy());
@@ -293,8 +308,23 @@ void RtspDecoder::run() {
                         const qint64 now = QDateTime::currentMSecsSinceEpoch();
                         if (now - fpsTimer >= 1000) {
                             const double fps = frameCount * 1000.0 / (now - fpsTimer);
+                            const double avgDecodeMs = (latencySampleCount > 0) ? (totalDecodeMs / latencySampleCount) : 0.0;
+                            const double avgScaleMs = (latencySampleCount > 0) ? (totalScaleMs / latencySampleCount) : 0.0;
+                            const double avgTotalMs = avgDecodeMs + avgScaleMs;
+
                             emit statusChanged(m_channel, true, fps);
+                            emit logLine("LATENCY", QString("CH%1 | 디코딩: %2ms, 스케일링: %3ms, 총처리: %4ms (%5x%6 @ %7fps)")
+                                                        .arg(m_channel)
+                                                        .arg(avgDecodeMs, 0, 'f', 2)
+                                                        .arg(avgScaleMs, 0, 'f', 2)
+                                                        .arg(avgTotalMs, 0, 'f', 2)
+                                                        .arg(m_dstW).arg(m_dstH)
+                                                        .arg(fps, 0, 'f', 1));
+
                             frameCount = 0;
+                            totalDecodeMs = 0.0;
+                            totalScaleMs = 0.0;
+                            latencySampleCount = 0;
                             fpsTimer = now;
                         }
                     }

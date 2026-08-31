@@ -10,7 +10,7 @@
 //   rtsp://<계정>:<비번>@<IP>:554/<0~3>/profile<N>/media.smp
 //
 // 센서 0~3 이 CH1~CH4 에 대응한다.
-//   - profile10: 2x2 분할 화면용 저해상도 서브스트림 (대역폭/CPU 절약)
+//   - profile4:  2x2 분할 화면용 서브스트림 (대역폭/CPU 절약)
 //   - profile2:  1채널 확대 모드용 2592x1520 원본 고해상도 메인스트림
 //
 // 카메라는 RPi 와 물리적으로 떨어져 있고 데몬은 카메라를 건드리지 않는다.
@@ -29,7 +29,7 @@ inline QJsonObject buildChannels(const QString &host,
                                  const QString &user,
                                  const QString &password,
                                  int port = 554,
-                                 int defaultProfile = 10)
+                                 int defaultProfile = 4)
 {
     QJsonObject channels;
     if (host.trimmed().isEmpty()) return channels;

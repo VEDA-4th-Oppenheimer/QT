@@ -356,24 +356,24 @@ void testMultiChannelRejectedSessionParsing() {
 }
 
 void testCameraConfigProfileSwitching() {
-    // 1. buildChannels 기본 profile10 검증
+    // 1. buildChannels 기본 profile4 검증
     QJsonObject chans = CameraConfig::buildChannels("172.20.32.43", "admin", "5hanwha!");
     assert(chans.size() == 4);
-    assert(chans.value("1").toString().contains("/0/profile10/media.smp"));
-    assert(chans.value("2").toString().contains("/1/profile10/media.smp"));
-    assert(chans.value("3").toString().contains("/2/profile10/media.smp"));
-    assert(chans.value("4").toString().contains("/3/profile10/media.smp"));
+    assert(chans.value("1").toString().contains("/0/profile4/media.smp"));
+    assert(chans.value("2").toString().contains("/1/profile4/media.smp"));
+    assert(chans.value("3").toString().contains("/2/profile4/media.smp"));
+    assert(chans.value("4").toString().contains("/3/profile4/media.smp"));
 
     // 2. setUrlProfile 동적 치환 검증
-    QString p10Url = chans.value("1").toString();
-    QString p2Url = CameraConfig::setUrlProfile(p10Url, 2);
+    QString p4Url = chans.value("1").toString();
+    QString p2Url = CameraConfig::setUrlProfile(p4Url, 2);
     assert(p2Url.contains("/0/profile2/media.smp"));
-    assert(!p2Url.contains("profile10"));
+    assert(!p2Url.contains("profile4"));
 
-    QString backToP10 = CameraConfig::setUrlProfile(p2Url, 10);
-    assert(backToP10 == p10Url);
+    QString backToP4 = CameraConfig::setUrlProfile(p2Url, 4);
+    assert(backToP4 == p4Url);
 
-    std::cout << "[PASS] testCameraConfigProfileSwitching: buildChannels defaults to profile10, setUrlProfile switches dynamically!\n";
+    std::cout << "[PASS] testCameraConfigProfileSwitching: buildChannels defaults to profile4, setUrlProfile switches dynamically!\n";
 }
 
 int main() {
